@@ -1,0 +1,11 @@
+---
+title: "Pipeline for analyzing genomes and metagenomes"
+---
+
+This website has been created with the aim of helping people who wish to perform sequencing reads analysis, both on **Illumina** and **Oxford Nanopore** platforms. On this page, you will find Bash scripts, explanations, and some bibliographic references that will help you to process the reads.
+
+This is a living page that will continue to grow and be updated, so do not pannic if you cannot find what you are looking for.
+
+Furthermore, you will only find scripts for preliminary analysis here. We help you to obtain tables with data of interest, which you will then probably have to use in other analyses (for example, in R) depending on your objectives.
+
+Be patient, and if you find any errors or notice that certain analyses are missing, don't hesitate to contact us!

@@ -1,0 +1,48 @@
+project:
+  type: website
+  output-dir: docs
+website:
+  title: "Pipeline for analyzing metagenomes and bacterial genomes"
+  navbar:
+    left:
+      - href: about.qmd
+        text: About us
+      - href: index.qmd
+        text: Home
+      - text: Metagenomes
+        menu: 
+          - href: Metagenomes_Illumina.qmd
+            text: Illumina
+          - href: Metagenomes_Nanopore.qmd 
+            text: Nanopore
+      - text: Genomes
+        menu: 
+          - href: Genomes_Illumina.qmd
+            text: Illumina
+          - href: Genomes_Nanopore.qmd
+            text: Nanopore
+          - href: Hybrid_assembly.qmd
+            text: Hybrid assembly
+
+    right: 
+      - icon: github 
+        aria-label: GitHub
+        href: https://github.com/anitalasa
+
+      - text: "<img src='images/orcid.png' title='ORCID' alt='ORCID' style='height:20px;'>"
+        href: https://orcid.org/0000-0003-3783-7157
+        
+      - text: "<img src='images/internet.png' title='web research group' alt='web research group' style='height:20px;'>"
+        href: https://grupos.eez.csic.es/mae/
+
+format:
+  html:
+    theme: Cerulean
+    css: styles.css
+    toc: true
+    code-fold: false
+    code-tools: true
+
+editor: visual
+
+

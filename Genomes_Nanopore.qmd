@@ -1,0 +1,2057 @@
+---
+title: "Genomics pipeline"
+subtitle: "Sequencing platform: Oxford Nanopore"
+author: "Ana V. Lasa (ana.lasa@eez.csic.es)"
+format: 
+  html:
+    theme: united
+    lang: en
+    css: styles.css
+editor: visual
+crossref:
+  fig-prefix: "Figure"
+  tbl-prefix: "Table"
+---
+
+# 0. Introduction
+
+In this tutorial you will learn how to perform genomics analyses. We will go through all the steps needed: from the processing of raw sequencing reads coming from **MinION (Nanopore)** platform until the obtaining of quality genomes.
+
+## 0.1 Requirements
+
+This pipeline has been set up on a Linux server (Ubuntu distribution), with 96 cores and 500 MB of RAM memory. You have to be careful and change some parameters according to the computational power of your machine.
+
+Furthermore, here we assume that all the packages, programs, conda environments, and databases are already correctly installed. Otherwise, you must install or download all of them as the first step.
+
+Some knowledge of **bash** is also desirable.
+
+| Program               | Version                          |
+|-----------------------|----------------------------------|
+| MinKNOW               | v.24.06.16                       |
+| Dorado                | v.7.4.14                         |
+| Porechop              | v.0.2.4                          |
+| NanoPlot              | v.1.46.2                         |
+| chopper               | v.0.8.0                          |
+| flye                  | v.2.9.5-b1801                    |
+| QUAST                 | v.5.2.0                          |
+| CheckM2               | v.1.1.0                          |
+| GTDB-tk               | v.2.6.1                          |
+| TYGS (web server)     | last accessed: 09/03/2026        |
+| JSpecies (web server) | last accessed: 09/03/2026        |
+| ResFinder (database)  | v.2.6.0                          |
+| Platon                | v.1.7                            |
+| IntegronFinder        | v.2.0.3                          |
+| geNomad               | v.1.11.2                         |
+| VFDB (database)       | last accessed: 11/03/2026        |
+| Bakta                 | v.1.12.0                         |
+| eggNOG-mapper         | v2.1.12                          |
+| MacSyFinder           | v.2.1.6                          |
+| TXSScan models        | v.1.1.4                          |
+| antiSMASH             | v.8.0.4                          |
+| dbCAN                 | v.3.0.7                          |
+| PHI-database          | v.4.19 last accessed: 12/03/2026 |
+| RepeatModeler         | v.2.0.2                          |
+| RepeatMasker          | v.4.1.2-p1                       |
+
+: Programs and their versions used in this pipeline
+
+## 0.2 Some useful tricks
+
+-Remember that if you want **to create or modify an script**, you can write in the terminal:
+
+`nano name_of_the_script.sh` (or whichever editor you use)
+
+This command will open the nano text-editor, where you can write or paste your script. There are some [keyboard shortcuts](https://www.nano-editor.org/dist/latest/cheatsheet.html "check the shortcuts") to manage the text editor.
+
+If the script is written in bash, then you have to write this in the terminal to execute the script:
+
+`bash name_of_the_script.sh`
+
+-Preferably work with **screens**. Some steps are very time-consuming, so it is necessary to run them on a screen. Hence, you can leave the server working when you go home to rest, or you can use the server to perform other analyses meanwhile. Working with screen is mandatory if you have internet connection problems.
+
+To create a screen, just run this command: `screen -S name_of_screen`. Once created, you can detach it and continue working on your server with this keyboard shortcut: `ctr + a (and then) d`
+
+# 1. Getting started with Minknow software
+
+For this example, we used the flow cell type **FLO-MIN114**, and the kit type **SQK-RBK114-24**. At first, our flow cell contained 1651 alive pores, but after loading the samples it dropped to 1313 pores. The scanning of the pores was performed each 1.5 hours. The base-calling was performed with the [software **Dorado**](https://nanoporetech.com/software/other/dorado "click here for more details") and the model HAC (*High Accyrary*). You can run it on your Linux server following [this pipeline](https://github.com/nanoporetech/dorado). All the raw read with quality values \< Q9 were removed from the dataset. POD5 files were saved once an hour.
+
+# 2. Prepare the data
+
+The files obtained by MinKNOW should be in the fastq format, preferably compressed (`.fastq.gz` extension). Let's assume that the name of our directory is `fastq_pass`. There we will find several directories, one for each barcode used in the sequencing. It is quite common to find more barcodes that those we used, and therefore more directories than samples we had. It could be due to sequencing errors. Check the size of that exceeding directories, and probably, they are much smaller than the expected ones. You can check it by running this command: `ls -l path_to_your_project/fastq_pass/` or `du path_to_your_project/fastq_pass/`. Have a look at our example:
+
+``` r
+drwxrwxr-x 2 ana ana 24576 ene 21 10:47 barcode01
+drwxrwxr-x 2 ana ana 20480 ene 21 10:48 barcode02
+drwxrwxr-x 2 ana ana 12288 ene 21 10:48 barcode03
+drwxrwxr-x 2 ana ana 32768 ene 21 10:49 barcode04
+drwxrwxr-x 2 ana ana 20480 ene 21 10:49 barcode05
+drwxrwxr-x 2 ana ana 20480 ene 21 10:50 barcode06
+drwxrwxr-x 2 ana ana 20480 ene 21 10:50 barcode07
+drwxrwxr-x 2 ana ana 20480 ene 21 10:51 barcode08
+drwxrwxr-x 2 ana ana 12288 ene 21 10:51 barcode09
+drwxrwxr-x 2 ana ana 16384 ene 21 10:51 barcode10
+drwxrwxr-x 2 ana ana 12288 ene 21 10:51 barcode11
+drwxrwxr-x 2 ana ana  4096 ene 21 10:51 barcode12
+drwxrwxr-x 2 ana ana  4096 ene 21 10:51 barcode13
+drwxrwxr-x 2 ana ana  4096 ene 21 10:51 barcode14
+drwxrwxr-x 2 ana ana  4096 ene 21 10:51 barcode15
+drwxrwxr-x 2 ana ana  4096 ene 21 10:51 barcode16
+drwxrwxr-x 2 ana ana  4096 ene 21 10:51 barcode17
+drwxrwxr-x 2 ana ana  4096 ene 21 10:51 barcode18
+drwxrwxr-x 2 ana ana  4096 ene 21 10:51 barcode19
+drwxrwxr-x 2 ana ana  4096 ene 21 10:51 barcode20
+drwxrwxr-x 2 ana ana  4096 ene 21 10:51 barcode21
+drwxrwxr-x 2 ana ana  4096 ene 21 10:51 barcode22
+drwxrwxr-x 2 ana ana  4096 ene 21 10:51 barcode23
+drwxrwxr-x 2 ana ana  4096 ene 21 10:51 barcode24
+```
+
+In our example, we sequenced 11 bacterial genomes. As you can see, directories `barcode01` - `barcode11` are much bigger than the others.
+
+You can delete the extra directories if you want (`barcode12` - `barcode24`, in our example). Remember that it can be achieved by the command `rm -r name_directory`.
+
+## 2.1 Index your samples
+
+We need to create a new file that indicates which samples each barcode corresponds to. To do this, we create a new file named `barcode_list.txt` containing two columns separated by a tab:
+
+``` r
+-First column: barcodecodes (“barcode01”)
+-Second column: sample names (“Pseudomonas_p3”)
+```
+
+::: callout-note
+You can write it manually, but it is preferable to automate the writing with a script. The more we write by hand, the more likely we are to make mistakes.
+:::
+
+So, run this: `ls ./fastq_pass/ > barcode_list.txt`. Look at our file:
+
+``` r
+barcode01       Pseudomonas_p3
+barcode02       Pseudomonas_p19
+barcode03       Pseudomonas_p43
+barcode04       Pseudomonas_p52
+barcode05       Pseudomonas_p60
+barcode06       Pseudomonas_p61
+barcode07       Arthrobacter_AFG7.2
+barcode08       Arthrobacter_AFG20
+barcode09       Bradyrhizobium_GV137
+barcode11       Luteibacter_L7
+```
+
+## 2.2 Join fastq files
+
+If we go into the directory related to one of the barcodes, we will see there many fastq files. This is because the MinION generates numerous files for security reasons. For instance, when it sequences a certain number or reads (or periodically), it stores the sequencing results and generates a new file (this can be change during the setting up of the sequencing project). This strategy is very useful for preventing the loss of all data in case of any unforeseen circumstances (e.g., a power outage). Eventually, we will find many fastq files in the corresponding directory. Look at our example:
+
+``` r
+~/Genomas_nanopore/fastq_pass/barcode01$ ls
+It looks like:
+
+fastq_runid_128c1e43c550283377174b78dd969327379b2983_0_0.fastq.gz   fastq_runid_128c1e43c550283377174b78dd969327379b2983_34_1.fastq.gz
+fastq_runid_128c1e43c550283377174b78dd969327379b2983_0_1.fastq.gz   fastq_runid_128c1e43c550283377174b78dd969327379b2983_34_2.fastq.gz
+fastq_runid_128c1e43c550283377174b78dd969327379b2983_0_2.fastq.gz   fastq_runid_128c1e43c550283377174b78dd969327379b2983_34_3.fastq.gz
+fastq_runid_128c1e43c550283377174b78dd969327379b2983_0_3.fastq.gz   fastq_runid_128c1e43c550283377174b78dd969327379b2983_34_4.fastq.gz
+fastq_runid_128c1e43c550283377174b78dd969327379b2983_0_4.fastq.gz   fastq_runid_128c1e43c550283377174b78dd969327379b2983_3_4.fastq.gz
+fastq_runid_128c1e43c550283377174b78dd969327379b2983_0_5.fastq.gz   fastq_runid_128c1e43c550283377174b78dd969327379b2983_35_0.fastq.gz
+fastq_runid_128c1e43c550283377174b78dd969327379b2983_10_0.fastq.gz  fastq_runid_128c1e43c550283377174b78dd969327379b2983_35_1.fastq.gz
+fastq_runid_128c1e43c550283377174b78dd969327379b2983_10_1.fastq.gz  fastq_runid_128c1e43c550283377174b78dd969327379b2983_36_0.fastq.gz
+fastq_runid_128c1e43c550283377174b78dd969327379b2983_10_2.fastq.gz  fastq_runid_128c1e43c550283377174b78dd969327379b2983_36_1.fastq.gz
+
+[...]
+```
+
+Let's join all the fastq files corresponding to the same barcode (sample) into just one file:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+INPUT_TABLE="/home/ana/Genomas_nanopore/barcode_list.txt" #path to the file that contains the relation between samples and barcodes
+FASTQ_DIR="/home/ana/Genomas_nanopore/fastq_pass" #path to the directory containing the sub-directories according to barcodes (and raw reads inside)
+OUT_DIR="/home/ana/Genomas_nanopore/00.raw_reads" #ouput directory
+
+mkdir -p "$OUT_DIR" #create the output directory
+
+while IFS=$'\t' read -r folder sample; do
+
+    echo "......merging fastq files from ${folder} to ${OUT_DIR}/${sample}.fastq"
+
+    zcat "${FASTQ_DIR}/${folder}"/* >> "${OUT_DIR}/${sample}.fastq" #zcat because fastq diles were compressed (.fastq.gz)
+
+done < "$INPUT_TABLE"
+```
+
+Check if the script has created just one `.fastq` file (decompressed) by sample.
+
+# 3. Trimming of the sequences
+
+It is time to remove the Nanopore adapters using during the sequencing. For that purpose, we are going to use the [tool **Porechop**](https://github.com/rrwick/Porechop "click to the user guide"), which looks for the adapters and removes them.
+
+This process takes some time, so it is best to run it on a new screen. It is advisable to parallelize the process, especially if we have many samples.
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONDA_ENV="nanopore" #indicate the name of the environment where Porechop is loaded
+
+RAW_DIR="/home/ana/Genomas_nanopore/00.raw_reads" #path to the directory storing the raw reads (1 fastq file per sample)
+OUT_DIR="/home/ana/Genomas_nanopore/01.reads_porechop" #output directory
+
+N_JOBS=2 #number of jobs to run in parallel. Set it up according to your server
+
+THREADS=48 #number of threads per job. Set it up according to your server
+
+#activate the conda environment
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV"
+
+mkdir -p "$OUT_DIR" #create the output directory
+
+echo "......running porechop on reads in $RAW_DIR"
+
+ls "$RAW_DIR" | parallel -j "$N_JOBS" \
+    porechop \
+        -i "$RAW_DIR"/{} \
+        -o "$OUT_DIR"/{} \
+        --threads "$THREADS"
+echo "......porechop finished"
+```
+
+The output of the script is a fastq file for each sample.
+
+# 4. Analysis of the quality of the reads
+
+To check different quality parameters, we will use the [tool **NanoPlot**](https://github.com/wdecoster/NanoPlot "click to inspect the user guide")[^1]. This tool is very useful because it gives us many different parameters and also nice plots.
+
+[^1]: De Coster, W., D’Hert, S., Schultz, D.T, Cruts, M., Van Broeckhoven, C. (2018) NanoPack: visualizing and processing long-read sequencing data, Bioinformatics, 34:2666–2669, https://doi.org/10.1093/bioinformatics/bty149
+
+``` r
+#!/bin/bash
+set -euo pipefail
+
+input_dir="/home/ana/Genomas_nanopore/01.reads_porechop" #path to the directory storing trimmed reads
+output_dir="/home/ana/Genomas_nanopore/02.NanoPlot_results" #output directory
+
+THREADS=78
+MAXLENGTH=300000
+
+mkdir -p "$output_dir" #create the output directory
+
+# Loop over all the fastq files in the input directory
+for f in "$input_dir"/*.fastq; do
+    # Extract the samples' name
+    base=$(basename "$f")
+
+    sample_out="$output_dir/${base%.fastq}"
+    mkdir -p "$sample_out"
+
+    # Run NanoPlot
+    NanoPlot \
+        -t "$THREADS \ #multithreading
+        --fastq "$f" \ #input fastq files
+        --maxlength "$MAXLENGHT \ # Hide reads longer than length specified
+        --plots dot \ #type of bivariate plot to make
+        -o "$sample_out"
+
+done
+```
+
+As a result, a directory is generated for each of the samples we have. In turn, each of the directories will contain all of these files:
+
+\-`LengthvsQualityScatterPlot_dot` (`.html`and `.png` extensions)
+
+\-`Non_weightedHistogramReadlength` (`.html`and `.png` extensions)
+
+\-`WeightedLogTransformed_HistogramReadlength` (`.html`and `.png` extensions)
+
+\-`Non_weightedLogTransformed_HistogramReadlength` (`.html`and `.png` extensions)
+
+\-`Yield_By_Length` (`.html`and `.png` extensions)
+
+\-`WeightedHistogramReadlength` (`.html`and `.png` extensions)
+
+\-`NanoPlot_date.log`
+
+\-`NanoPlot-report.html`
+
+\-`NanoStats_post_filtering.txt`
+
+\-`NanoStats.txt`
+
+In order not to lengthen this pipeline we are not going into the details of each file. You can delve into them if your are interested. Here we suggest you to pay special attention to the number of sequences, N50 values, mean read length, and mean read quality.
+
+# 5. Filtering of the sequences
+
+Now it is time to remove low-quality reads from our data. For that end, we can use different efficient tools, such as [**Nanofilt**](https://github.com/wdecoster/nanofilt "click to the user guide") or [**chopper**](https://github.com/wdecoster/chopper?tab=readme-ov-file "go the user guide")[^2].
+
+[^2]: De Coster, W., Rademakers, R. (2023) NanoPack2: population-scale evaluation of long-read sequencing data, Bioinformatics, 39:btad311, https://doi.org/10.1093/bioinformatics/btad311
+
+## 5.a) NanoFilt
+
+We will use this software to remove that reads with an associated quality score \< 10, although it is also possible to perform the filtering by size. Even though this software is efficient and gives nice results, it will no longer receive any updates. Take it into consideration for further analyses.
+
+Run these command lines:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONDA_ENV="nanopore" #indicate the name of the conda environment that hosts chopper
+
+INPUT_DIR="/home/ana/Genomas_nanopore/01.reads_porechop" #path to the trimmed reads
+
+OUTPUT_DIR="/home/ana/Genomas_nanopore/03.nanofilt_results"#output directory
+
+MIN_QUALITY=10 #minimum desired quality. Change it according to your needs. You may check the report given by Minknow to have an idea
+
+#activate conda environment
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV"
+
+mkdir -p "$OUTPUT_DIR" #create the output directory
+
+#Loop over all fastq files in the input directory
+for f in "$INPUT_DIR"/*.fastq; do
+
+    base=$(basename "$f")
+
+    echo "......filtering reads from $base"
+
+    NanoFilt -q "$MIN_QUALITY" < "$f" > "$OUTPUT_DIR/$base"
+
+done
+
+echo "......NanoFilt finished"
+```
+
+This script just stores the filtered quality reads into fastq files, but does not give you more information. If you want to check the effect of the filtering, or more data about the quality sequences, now you can run again NanoPlot. For that purpose, run the script proposed in the section [4. Analysis of the quality of the reads] of this pipeline, adapting the input and outputs directories accordingly.
+
+## 5.b) Chopper
+
+This program is based on NanoFilt, also gives nice results. If you decide to perform the quality filtering of the reads by means of chopper instead of NanoFilt, you just have to run the following script. It will create also a summary report.
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONDA_ENV="nanopore" #indicate the name of the environment were chopper is loaded
+
+INPUT_DIR="/home/ana/Genomas_nanopore/01.reads_porechop" #path to the trimmed reads
+OUTPUT_DIR="/home/ana/Genomas_nanopore/03.chopper_results" #output directory
+
+MIN_QUALITY=10 #minimum qscore
+
+SUMMARY_FILE="$OUTPUT_DIR/filtering_summary.tsv" #the name of the summary report
+
+#activate conda environment
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV"
+
+mkdir -p "$OUTPUT_DIR" #create the output directory
+
+echo -e "sample\treads_before\treads_after" > "$SUMMARY_FILE"
+
+#Loop over all the fastq files
+for f in "$INPUT_DIR"/*.fastq; do
+
+    base=$(basename "$f")
+    output_file="$OUTPUT_DIR/$base"
+
+    echo "......filtering reads with chopper for $base"
+    
+    #count the number of trimmed reads (prior to the filtering)
+    reads_before=$(($(wc -l < "$f") / 4))
+
+    #perform the filtering
+    chopper -q "$MIN_QUALITY" < "$f" > "$output_file"
+
+    #count the number of filtered reads
+    reads_after=$(($(wc -l < "$output_file") / 4))
+
+    echo -e "${base}\t${reads_before}\t${reads_after}" >> "$SUMMARY_FILE"
+
+done
+
+echo "......chopper filtering finished"
+echo "......summary written to $SUMMARY_FILE"
+```
+
+As a result, these command lines create a report named `filtering_summary.tsv`, which looks like:
+
+``` r
+sample            reads_before    reads_after
+Pseudomonas_p19.fastq   744282  742316
+Pseudomonas_p3.fastq    1163302 1160436
+```
+
+In this pipeline, we will use just the results given by chopper, but you can use the program you prefer.
+
+# 6. Assembly reads into contigs
+
+We are going to assembly all the quality reads into contigs for each sample. For that purpose, we will use the [tool **Flye**](https://github.com/mikolmogorov/Flye "go to the user manual")[^3]. This software is very powerful, since it assembles the reads into contig and also performed the polishing of the assemblies, which improved the quality of the genomes.
+
+[^3]: Kolmogorov, M., Yuan, J., Lin, Y., Pevzner, P. (2019) Assembly of Long Error-Prone Reads Using Repeat Graphs. Nature Biotechnology, 37: 540–546. https://doi.org/10.1038/s41587-019-0072-8
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONDA_ENV="nanopore" #write the name of the conda environment where Flye is installed
+
+INPUT_DIR="/home/ana/Genomas_nanopore/03.chopper_results" #path to the directory containing the filtered reads. If you worked with NanoFilt, just change the path to the directory where its outputs are stored. 
+
+OUTPUT_DIR="/home/ana/Genomas_nanopore/04.contigs_flye" #output directory
+
+THREADS=64
+
+#activate conda environment
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV"
+
+mkdir -p "$OUTPUT_DIR" #create the output directory
+
+#Loop over all fastq files
+for f in "$INPUT_DIR"/*.fastq; do
+
+    base=$(basename "$f" .fastq)
+    sample_out="$OUTPUT_DIR/$base"
+
+    echo "......assembling sample $base with Flye"
+
+     flye \
+            --nano-hq "$f" \ #indicate the sequencing technology (ONT, high-quality), since it also works with PacBio reads
+            --out-dir "$sample_out" \
+            --threads "$THREADS"
+    
+done
+
+echo "......Flye assembly finished"
+```
+
+As a result, a new file is created for each genome. In turn, different files and directories are also created inside each directory, namely `00-assembly`, `20-repeat`, `40-polishing`, `assembly_graph.gfa`, `assembly_info.txt`, `params.json`, `10-consensus`, `30-contigger`, `assembly_graph.gv`, `flye.log`, and `assembly.fasta`. If you want more details of all these files, you can have a look a the [Flye's user manual](https://github.com/mikolmogorov/Flye "go to the user manual"). In brief, `assembly.fasta`contain the nucleotide sequences of each contig in fasta format, while `assembly_info.txt`shows as the name of the contig, its length and coverage, whether it is circular o not, among other parameters:
+
+``` r
+head -n 5 assembly_info.txt #this command gives us:
+
+#seq_name       length  cov.    circ.   repeat  mult.   alt_group       graph_path
+contig_1        7007749 308     Y       N       1       *       1
+```
+
+::: callout-note
+Even if you we asked for 5 lines of the file (`head -n 5`) it shows us just 1 line. This is because long-reads sequencing platforms such as Oxford Nanopore or PacBio it is very common to assemble the entire bacterial genomes in pairs or even single contigs, as in our example.
+:::
+
+# 7. Check the quality of the assemblies
+
+Each fasta file is stored in a different directory, so first we will move them to a common folder. Moreover, we will rename the fasta file to identify the sample they come from:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+INPUT_DIR="/home/ana/Genomas_nanopore/04.contigs_flye" #path to the directory where the fasta files coming from Flye are stored
+
+OUTPUT_DIR="/home/ana/Genomas_nanopore/05.renamed_contigs_fasta" #output directory
+
+mkdir -p "$OUTPUT_DIR" #create output directory
+
+
+for dir in "$INPUT_DIR"/*/; do
+
+    sample=$(basename "$dir") #extract the name of the sample
+    fasta="$dir/assembly.fasta"
+    output_file="$OUTPUT_DIR/${sample}_assembly.fasta" #edit this line to adapt the name of final fasta according to your interests
+
+    echo "......renaming contigs for sample $sample"
+
+    awk -v s="$sample" '
+        /^>/ { sub(/^>/, ">" s "_", $0) }
+        { print }
+    ' "$fasta" > "$output_file"
+
+done
+```
+
+Look at the results:
+
+``` r
+ls ./05.renamed_contigs_fasta/
+Pseudomonas_p19_assembly.fasta  Pseudomonas_p3_assembly.fasta
+```
+
+Now, we have to check the quality of the assembled genomes, and we can do that in different ways:
+
+## 7.a) QUAST software
+
+We can use a script written in Python to evaluate the quality of the assembly. Specifically, we can use the `quast.py` script, whose main usage is already described in [this website](https://quast.sourceforge.net/docs/manual.html#sec1 "click to see the manual")[^4].
+
+[^4]: Mikheenko, A., Saveliev, V., Hirsch, P., Gurevich, A., (2023) WebQUAST: online evaluation of genome assemblies, Nucleic Acids Research, 51:W601–W606, https://doi.org/10.1093/nar/gkad406
+
+``` r
+#!/bin/bash
+set -euo pipefail
+
+INPUT_DIR="/home/ana/Genomas_nanopore/05.renamed_contigs_fasta" # path to the folder contained the renamed fasta files of the assembled contigs
+OUTPUT_BASE="/home/ana/Genomas_nanopore/06.quast_results" #output directory (parent folder)
+
+mkdir -p "$OUTPUT_BASE" 
+
+#Looper over all fasta files 
+for fasta in "$INPUT_DIR"/*.fasta; do
+    # Extract the base name of the fasta files (without the extension)
+    sample_name=$(basename "$fasta" .fasta)
+
+    # Create output directory for each sample/genome
+    OUTPUT_DIR="$OUTPUT_BASE/$sample_name"
+    mkdir -p "$OUTPUT_DIR"
+
+    echo "Processing $sample_name ..."
+
+    # Run Quast
+    quast.py -m 0 -t 64 "$fasta" -o "$OUTPUT_DIR"
+
+    echo "Results stored in: OUTPUT_DIR"
+done
+```
+
+The script creates a directory for each genome/sample, and inside each folder, you can find different files. We recommend having a look at the file `report.pdf`, where you can find the total number of contigs, the size of the contig(s), GC %, N50 and N90 values, and some useful plots.
+
+## 7.b) CheckM2 software
+
+Software [**CheckM2**](https://github.com/chklovski/CheckM2 "click to see more details")[^5] is a machine learning-based tool that predicts the completeness and contamination of bacterial genomes or bins.
+
+[^5]: Chklovski, A., Parks, D.H., Woodcroft, B.J. *et al*., (2023) CheckM2: a rapid, scalable and accurate tool for assessing microbial genome quality using machine learning. Nat Methods 20, 1203–1212. https://doi.org/10.1038/s41592-023-01940-w
+
+First of all, you need to download and install the external DIAMOND database CheckM2 relies on for rapid annotation. For that purpose, you can run this command:
+
+``` r
+wget https://zenodo.org/records/14897628/files/checkm2_database.tar.gz?download=1 #downloads the database from Zenodo repository
+```
+
+The database will be downloaded compressed in `.tar.gz` format, so you will need to decompress it as follows:
+
+``` r
+tar -xvzf checkm2_database.tar.gz
+```
+
+Now, it is time to run CheckM2 over all the fasta files:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONDA_ENV="checkm2" #indicate the name of conda environment where Checkm2 is already installed
+
+INPUT_DIR="/home/ana/quarto/05.renamed_contigs_fasta" #path to the folder containing all the already assembled genomes
+OUTPUT_DIR="/home/ana/quarto/07.checkm2_results" #output directory
+
+CHECKM2_DB="/home/ana/quarto/CheckM2_database/uniref100.KO.1.dmnd" #path to DIAMOND's database
+
+THREADS=64
+
+EXTENSION="fasta" #extension of your fasta files. Change it accordingly
+
+#activate conda environment
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV"
+
+mkdir -p "$OUTPUT_DIR" #create output directory
+
+echo "......running CheckM2 on contigs in $INPUT_DIR"
+
+checkm2 predict \ 
+    -i "$INPUT_DIR" \
+    -o "$OUTPUT_DIR" \
+    -t "$THREADS" \
+    --remove_intermediates \ # it removes all intermediate files (protein files, diamond output)
+    -x "$EXTENSION" \
+    --force \ #overwrite output directory
+    --database_path "$CHECKM2_DB"
+
+echo "......CheckM2 analysis finished"
+echo "......results written to $OUTPUT_DIR"
+```
+
+As a result, the logfile and a report are given, namely `quality_report.tsv`. This file contains information about the assembly quality for each sample. For instance, you can know the completeness level (%), the contamination percentage, N50 values, genome size (bp), total GC content (%), and son on.
+
+It is recommended that genomes be as **little fragmented** as possible (the fewest possible contigs), with a **contamination** percentage lower than 5%, **completeness** greater than 90%, and the highest possible **N50** and **coverage** values.
+
+# 8. Taxonomic assignment
+
+There different programs that can perform the taxonomic assignment of the contigs. Here we will show the most common ones.
+
+::: callout-note
+Remember the current taxonomy new species description boundaries. If two prokaryotes show ANI values lower than 95%, they can be considered different species. If dDDH value between two prokaryotic genomes \< 70%, they can be considered different species.
+:::
+
+## 8.a) GTDB-Tk
+
+The [tool **GTDB-Tk**](https://github.com/Ecogenomics/GTDBTk "click to see the user guide")[^6] is specially designed for assigning taxonomy to bacterial and archaeal genomes. It is based on the [Genome Database Taxonomy](https://gtdb.ecogenomic.org/), which included more than 730.000 prokaryotic genomes. The database also includes environmental MAGs, so they cannot be validated by the [**LPSN** (*List of Prokaryotic names with Standing in Nomeclature*)](https://lpsn.dsmz.de/) or **IJSEM** (*International Journal of Systematic and Evolutionary Microbiology*). Thus, although this database is really useful and helpful in assigning taxonomy, maybe you prefer to use another tools if you are trying to describe potential new species.
+
+[^6]: Chaumeil, P.A., Mussig, A.J., Hugenholtz, P., Parks, D.H. (2023) GTDB-Tk v2: memory friendly classification with the genome taxonomy database, Bioinformatics, 38:5315–5316, https://doi.org/10.1093/bioinformatics/btac672
+
+The first step is to download the database and decompress it:
+
+``` r
+wget https://data.ace.uq.edu.au/public/gtdb/data/releases/latest/auxillary_files/gtdbtk_package/full_package/gtdbtk_data.tar.gz
+
+tar xvzf gtdbtk_data.tar.gz -C desired/path/to/store/it #change it accordingly if you want to store the decompressed file in a specific path
+```
+
+::: callout-warning
+The file is higher than 130 GB, so the downloading step takes more than 4 h in our server.
+:::
+
+After decompressing the database, it is necessary to create an environment variables so that the program knows where the database is located. We can indicate it and
+
+``` r
+export GTDBTK_DATA_PATH=/path/to/the/database #change the path accordingly
+```
+
+You can also add this line inside the following script, just before running GTDB-Tk. In this example, we will include the creation of the environment variable inside the following script:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONDA_ENV="nanopore" #write the name of the conda environment where GTDB-Tk is installed
+
+INPUT_DIR="/home/ana/Genomas_nanopore/05.renamed_contigs_fasta" #path to the directory containing the assembled genomes
+
+OUTPUT_DIR="/home/ana/Genomas_nanopore/08.taxonomy_gtdb" #output directory
+
+#create the environment variable
+export GTDBTK_DATA_PATH=/home/ana/Genomas_nanopore/release226 #path to the GTDB-Tk database. Change it according to your path
+
+THREADS=64
+
+EXTENSION="fasta" #extension of the genomes' fasta file. Change it according to your data
+
+#Activate conda environment
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV"
+
+mkdir -p "$OUTPUT_DIR" #create the ouput directory
+
+echo "......running GTDB-Tk taxonomy classification"
+
+gtdbtk classify_wf \ #classify workflow
+    --genome_dir "$INPUT_DIR" \
+    --out_dir "$OUTPUT_DIR" \
+    --cpus "$THREADS" \
+    -x "$EXTENSION" \
+    --skip_ani_screen #Skip the skani ANI screening step to classify genomes
+
+echo "......GTDB-Tk classification finished"
+echo "......results written to $OUTPUT_DIR"
+```
+
+This script creates a directory containing several different files
+
+In this pipeli, we will focus solely on the file named `gtdbtk.bac120.summary.tsv`. This one includes information about the potential taxonomical classification, the reference of the closest genome, its ANI values, among other. Please, check [the user manual](https://github.com/Ecogenomics/GTDBTk "click to see the user guide") to gain more details about the ouputs and their meaning.
+
+## 8.b) TYGS
+
+[**TYGS** (*TYpe strain Genome Server*)](https://tygs.dsmz.de/)[^7] is an automated high-throughput platform for genome-based taxonomy; it is a web server. It has been developed to perform prokaryotic taxonomy analyses based on the whole genome of type species strains, so it is closely related to the **LPSN**. By means of this web-server you can calculate the **dDDH** (*digital DNA-DNA hybridization*) values for your genomes of interest by comparing them with the closest type strains' genome.
+
+[^7]: Meier-Kolthoff, J.P., Göker, M. (2019) TYGS is an automated high-throughput platform for state-of-the-art genome-based taxonomy. Nat Commun 10, 2182. https://doi.org/10.1038/s41467-019-10210-3
+
+The web server is very easy to use and there is also a [tutorial available](https://tygs.dsmz.de/assets/TYGS_tutorial-fe4f87554db53994fb35d6a93d399b627cfb5fe397ba20e765482cde1076937c.pdf), so we will not go through the details. You just need to upload the fasta files of your genomes under study, and follow the developers' instructions.
+
+## 8.c) JSpecies - ANI calculation -
+
+The online web server [**JSpecies**](https://jspecies.ribohost.com/jspeciesws/)[^8] is another useful resource to measure the probability of prokaryotic genomes to belong to the same species or not, based on the their sequences. You can calculate the ANIm and ANIb values between your genomes of interest and other genomes. We recommend searching in the website's own database for the type strains that TYGS (section [8.b) TYGS]) said were closest to yours.
+
+[^8]: Richter, M., Rosselló-Móra, R., Glöckner, F.O., Peplies, J., (2016) JSpeciesWS: a web server for prokaryotic species circumscription based on pairwise genome comparison, Bioinformatics, 32:929–931, https://doi.org/10.1093/bioinformatics/btv681
+
+The website gives you instructions to use the web-server, so we will skip the explanation of the main possibilities of the web.
+
+## 8.d) Genome-to-genome distance calculator -dDDH calculation-
+
+We have already calculated ANI values, but now it is time to obtain the percentages of *digital DNA-DNA hybridization* (**dDDH**). For that, we will use the [website](https://ggdc.dsmz.de/ggdc.php).
+
+All we have to do is upload the high-quality fasta file of the genome for our strains of interest, along with the accession numbers of the genome of the closest reference strains. We can obtain the reference strains and their accession numbers from the report provided by TYGS.
+
+The platform will send us an email with all the results: dDDH (%), model confidence interval, probability that the dDDH is greater than 70%, and distance between the strains.
+
+# 9. Looking for Antibiotic Resistance Genes (ARG)
+
+There are many programs available to look for ARG: ResFinder, PlasmidFinder,AMRFinder, PointFinder, CARD, ARG-ANNOT, etc. In [this link](https://bitbucket.org/genomicepidemiology/workspace/projects/DB) you can find many curated, reliable databases for searching antibiotic resistance genes.
+
+Here we will use the [database **ResFinder**](https://genepi.food.dtu.dk/resfinder)[^9] [^10]
+
+[^9]: Zankari, E., Hasman, H., Cosentino, S., Vestergaard, M., Rasmussen, S., *et al*., (2012) Identification of acquired antimicrobial resistance genes. J Antimicrob Chemother. 67:2640-4. https://doi.org/10.1093/jac/dks261
+
+[^10]: Florensa, A.F., Kaas, R.S., Clausen, P.T.L.C., Aytan-Aktug, D., Aarestrup., F.M. (2022). ResFinder – an open online resource for identification of antimicrobial resistance genes in next-generation sequencing data and prediction of phenotypes from genotypes. Microbial Genomics 8:000748. https://doi.org/10.1099/mgen.0.000748
+
+Firstly, we have to download the latest version of the ResFinder database in this way:
+
+``` r
+git clone https://bitbucket.org/genomicepidemiology/resfinder_db/
+```
+
+We will perform a BLAST of our genomes against ResFinder database. So we have to adapt ResFinder database to the format needed to perform BLAST locally:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+INPUT_FASTA="/home/ana/Genomas_nanopore/resfinder_db/all.fsa" #path to the downloaded ResFinder databse. You have to look for the file named "all.fsa"
+
+OUTPUT_DIR="/home/ana/Genomas_nanopore/resfinder_db_parablast" #ouput directory
+
+DB_NAME="resfinder_database"#prefix of the database, change according to your interests
+
+mkdir -p "$OUTPUT_DIR" #create the output directory
+
+echo "......creating BLAST database from $INPUT_FASTA"
+
+makeblastdb \
+    -in "$INPUT_FASTA" \
+    -dbtype nucl \ #indicate that it is a nucleotide database
+    -out "$OUTPUT_DIR/$DB_NAME"
+
+echo "......BLAST database created"
+echo "......database location: $OUTPUT_DIR/$DB_NAME"
+```
+
+As a result, the directory `refinder_db_parablast` is created. It contains the following files, which are needed to run BLAST properly:
+
+``` r
+resfinder_database.ndb  resfinder_database.nin  resfinder_database.not  resfinder_database.ntf
+resfinder_database.nhr  resfinder_database.njs  resfinder_database.nsq  resfinder_database.nto
+```
+
+Now, it is time to run BLAST againts ResFinder database. We are going to select just those hits that are similar in more than **80%**.
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+INPUT_DIR="/home/ana/Genomas_nanopore/05.renamed_contigs_fasta" #path where fasta file of the genomes are stored
+
+RESFINDER_DB="/home/ana/Genomas_nanopore/resfinder_db_parablast/resfinder_database" #path to the already created ResFinder BLAST-formatted database
+
+OUTPUT_DIR="/home/ana/Genomas_nanopore/09.resfinder_results" #output directory
+
+MIN_IDENTITY=80 #minimum identity percentage, change it according to your needs
+
+mkdir -p "$OUTPUT_DIR" #create the output directory
+
+# Loop over all fasta file
+for f in "$INPUT_DIR"/*.fasta; do #be careful and change it according the extension of your fasta files (.fna, .fa, .fasta, ...)
+    
+    #extract the name of each sample
+    sample=$(basename "$f" .fasta)
+    output_file="$OUTPUT_DIR/blastn_${sample}.txt" #the output files will start by "blastn"
+
+    echo "......searching ARGs with blastn vs ResFinder on sample $sample"
+
+    blastn \
+        -query "$f" \
+        -db "$RESFINDER_DB" \
+        -out "$output_file" \
+        -outfmt "6 std qlen slen" \ #format 6 of the output +  Query sequence length +  Subject sequence length
+        -culling_limit 1 \
+        -perc_identity "$MIN_IDENTITY"
+
+done
+
+echo "......ResFinder BLAST search finished"
+echo "......results written to $OUTPUT_DIR"
+```
+
+As a result, `blastn_samplename.txt` files are obtained. They contain all the hit with \>80% similarity to ARG in the ResFinder database. We will have to filter these files, because there may be genomes that do not contain ARGs, and we may also have partial alignments. That is, sequences that are more than 80% similar to ARGs, but only in a very small region. We will keep those that show high similarity and high alignment coverage (\>90%). Of course, you can change these parameters!
+
+Furthermore, the following script will also create a matrix that indicates the number unique genes (if an ARG was found more than once in a bacterial genome, it will show us that ARG just one time) appeared in each genome.
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+INPUT_DIR="/home/ana/Genomas_nanopore/09.resfinder_results" #path to the directory where the raw results of ResFinder are stored
+OUTPUT_DIR="/home/ana/Genomas_nanopore/10.resfinder_matrix" #output directory
+
+MIN_IDENTITY=80 #minimum similarity values. Change according to your interests
+MIN_COVERAGE=90 #minimum alignment coverage values. Change according to your interests
+
+FILTERED="$OUTPUT_DIR/blast_filtered_hits.txt" #name of the file that will contain all the hits that pass the filters
+MATRIX="$OUTPUT_DIR/matrix_resfinder.txt" #name of the matrix to be created
+
+mkdir -p "$OUTPUT_DIR" #create the output directory
+rm -f "$FILTERED" "$MATRIX" #remove intermediate files
+
+echo "......processing BLAST results"
+
+awk -F'\t' \ #file is separated by tabs
+    -v id="$MIN_IDENTITY" \ #passes the variable id to awk
+    -v cov="$MIN_COVERAGE" \
+    -v filtered="$FILTERED" -v matrix="$MATRIX" '
+    
+BEGIN { FS="\t" }
+
+# Function to extract the name of the samples
+function sample_name(fpath){
+    gsub(".*/","",fpath) #removes all the path and keeps just the name of the sample
+    gsub("blastn_","") #removes the prefix. Be careful with the structure of the name of your files
+    gsub(".txt","") #removes the extension of the files
+    return fpath
+}
+
+{
+    # to ignore empty files (no ARGs in the genome)
+    if(NF==0) next #skipt empty rows
+
+    sample = sample_name(FILENAME) #obtains the name of the corresponding sample
+    samples[sample]=1 #indicates that the sample exists
+
+    identity=$3 #takes the column 3 of the BLAST file
+    align_len=$4 #takes the column 4
+    gene_len=$14 #takes the column 14
+    coverage=100*align_len/gene_len #calculates the alignment coberage
+
+    #loop over hits passing both filters
+    if(identity >= id && coverage >= cov){
+        gene=$2 #takes the name of the gene
+        genes[gene]=1 #save the gene
+        count[gene,sample]++ #counts the number of times that gene is found 
+        print sample "\t" $0 >> filtered
+    }
+}
+
+END {
+    # if no hits pass the filters
+    if(length(genes)==0){
+        print "No hits passed the filters." > matrix
+        exit
+    }
+
+    # creates the list of samples
+    ns=0
+    for(s in samples){ sample_list[ns]=s; ns++ }
+
+    # creates the list of genes
+    ng=0
+    for(g in genes){ gene_list[ng]=g; ng++ }
+
+    # prints header
+    printf("\t") > matrix
+    for(i=0;i<ns;i++){ printf("%s\t", sample_list[i]) >> matrix }
+    printf("\n") >> matrix
+
+    # prints the matrix
+    for(i=0;i<ng;i++){
+        g=gene_list[i]
+        printf("%s", g) >> matrix
+        for(j=0;j<ns;j++){
+            s=sample_list[j]
+            v=count[g,s]
+            if(v=="") v=0
+            printf("\t%s", v) >> matrix
+        }
+        printf("\n") >> matrix
+    }
+}
+' "$INPUT_DIR"/blastn_*.txt
+
+echo "......matrix written to $MATRIX"
+echo "......filtered hits written to $FILTERED"
+```
+
+In case of ARG detection, two different files are created for each genome: `blast_filtered_hits.txt`, containing all the results of the filtered BLAST, and `matrix_resfinder.txt`, a matrix indicating the presence or absence of ARG in each bacterial genome.
+
+# 10. Plasmid detection
+
+In this case, there are also many software to detect plasmid in our contigs. For example, cBar, plasmidSPAdes, Plasmid Profiler, Recycler, PlasmidSeeker, PlaScope, PlasFlow, PlasmidTron, Platon, PlasmidFInder, genomad, among many others. In this tutorial, we will use the [tool **Platon**](https://github.com/oschwengers/platon "click to the user manual")[^11], because of its good results and popularity. To run this software, first we need to download the corresponding database on which it is based.
+
+[^11]: Schwengers, O., Barth, P., Falgenhauer, L., Hain, T., Chakraborty, T., Goesmann, A. (2020). Platon: identification and characterization of bacterial plasmid contigs in short-read draft assemblies exploiting protein sequence-based replicon distribution scores. Microbial Genomics, 95:295. https://doi.org/10.1099/mgen.0.000398
+
+``` r
+wget https://zenodo.org/record/4066768/files/db.tar.gz
+tar -xzf db.tar.gz #decompress it
+rm db.tar.gz #remove the compressed one to save disk space
+```
+
+Write down the path where the database is stored in your machine.
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONDA_ENV="nanopore" #name of the environment where Platon is installed
+
+INPUT_DIR="/home/ana/Genomas_nanopore/05.renamed_contigs_fasta" #path to the directory where fasta files of the genomes are stored
+
+OUTPUT_DIR="/home/ana/Genomas_nanopore/11.platon_results" #output directory
+
+PLATON_DB="/home/ana/Genomas_nanopore/platon_database/" #path to the Platon database. Change it accordingly
+
+THREADS=24
+
+# Activate conda environment
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV"
+
+mkdir -p "$OUTPUT_DIR" #create the output directory
+
+echo "Procesando archivos FASTA en $INPUT_DIR..."
+
+# Loop over fasta files
+for i in "$INPUT_DIR"/*.fasta; do #be careful and change here according to your fasta files' extension
+    
+    # Skipt this step if there are no fasta files
+    [ -e "$i" ] || continue
+
+    # Extract the name of the samples without the extension. Change it if your files have another extension
+    base=$(basename "$i" .fasta)
+
+    echo "Procesando muestra: $base"
+
+    # Run Platon
+    platon \
+        --db "$PLATON_DB" \ #database
+        --output "$OUTPUT_DIR/$base" \
+        --threads "$THREADS" \
+        "$i"
+done
+
+echo "......Platon finishes. Results stored in $OUTPUT_DIR"
+```
+
+As a result, a directory is created for each genome. For those bacteria that contain plasmids, in this directory you can find this type of files: `samplename_chromosome.fasta` (a fasta file of the chromosome), `samplename_assembly.log`, `samplename.json`, `samplename.plasmid.fasta` (a fasta file of the contigs catalogued as plasmids or with a plasmidic origen), and`samplename.tsv`. The latter includes a summary of the analysis. There, you can find information regarding each contigs, its length, coverage, number of ORFs, if it is circular or not, among others.
+
+For those bacteria that no plasmids were detected, you will just find a logfile inside the output directory.
+
+# 11. Detection of integrons
+
+The tool **Integron Finder**[^12] detects integrons in DNA sequences. It can be run in the web server [**Galaxy Pasteur**](https://galaxy.pasteur.fr/root?tool_id=toolshed.pasteur.fr%2Frepos%2Fkhillion%2Fintegron_finder%2Fintegron_finder%2F2.0.1) or by command lines. We will use the latter option.
+
+[^12]: Néron, B., Littner, E., Haudiquet, M., Perrin, A., Cury, J., Rocha, E.P.C., (2022) IntegronFinder 2.0: Identification and Analysis of Integrons across Bacteria, with a Focus on Antibiotic Resistance in Klebsiella. Microorganisms 10:700. https://doi.org/10.3390/microorganisms10040700
+
+In this case, we will run several jobs in parallel:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONDA_ENV="integronfinder" #indicate the name of the conda environment where IntegronFinder is placed
+
+INPUT_DIR="/home/ana/Genomas_nanopore/05.renamed_contigs_fasta" #path to the directory containing the genomes in fasta format
+
+OUTPUT_DIR="/home/ana/Genomas_nanopore/12.integronfinder_results" #output directory
+
+JOBS=22 #number of jobs to run in parallel. Change it according to the power of your machine
+
+CPUS_PER_JOB=1 #number of CPUs to be used
+
+# Activate conda environment
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV"
+
+mkdir -p "$OUTPUT_DIR" # create the output directory
+
+FILES=("$INPUT_DIR"/*.fasta) #create a list containing the name of all the samples to be processed. Be careful with the extension of fasta files, and change it accordingly.
+
+# Run IntegronFinder in parallel
+printf "%s\n" "${FILES[@]}" | parallel -j "$JOBS" integron_finder \
+    --cpu "$CPUS_PER_JOB" \
+    --pdf \
+    --outdir "$OUTPUT_DIR" \
+    {}
+
+echo "......Work finished. Results are stored in $OUTPUT_DIR"
+```
+
+As a result, one folder per genome is created. Inside them, we will find several files, namele `samplename.integrons` (file with all integrons and their elements detected in all sequences in the input file) `integron_finder.out` (similar to a logfile), and `samplename.summary`. The latter give us the number and types of integrons found in our genomes of interests.
+
+If you find integrons, maybe it would be a nice idea to look in which contigs they are placed, and if they are in plasmids or not.
+
+# 12. Detection of viruses or prophagues
+
+There are many programs designed to detect viruses or prophages inserted into the genome of our bacteria, such us Phirbo, HostPhinder, VirHostMatcher, WIsH, Bacteriophage-HostPrediction, Host Taxon Predictor (HTP), Prokaryotic virus Host Predictor (PHP), PredPHI, PHERI, VirHostMatcher-Net, VirFinder, PHASTEST, among many others [^13] [^14].
+
+[^13]: Ho, S.F.S., Wheeler, N.E., Millard, A.D. *et al*., (2023) Gauge your phage: benchmarking of bacteriophage identification tools in metagenomic sequencing data. Microbiome 11, 84 https://doi.org/10.1186/s40168-023-01533-x
+
+[^14]: Versoza, C.J., Pfeifer, S.P., (2022) Computational Prediction of Bacteriophage Host Ranges. Microorganisms 10:149. https://doi.org/10.3390/microorganisms10010149.
+
+In this pipeline, we will use the [tool **geNomad**](https://portal.nersc.gov/genomad/index.html "click here to go to the user manual")[^15]. This tool is really powerful, since it can give us a detailed report of all the potential markers from viral origin in our bacteria's genome. It is also able to detect plasmids, and classify taxonomically all the potential viruses detected in the genomes.
+
+[^15]: Camargo, A.P., Roux, S., Schulz, F. *et al*., (2024) Identification of mobile genetic elements with geNomad. Nat Biotechnol 42:1303–1312. https://doi.org/10.1038/s41587-023-01953-y
+
+Firstly, we have to download the database on which the program is based:
+
+``` r
+genomad download-database . #The "." is not a spelling mistake, is just to indicate the path where the database should be downloaded.
+```
+
+Then, we have to run these lines that include all the steps of the whole pipeline proposed by the developers:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+INPUT_DIR="/home/ana/Genomas_nanopore/05.renamed_contigs_fasta" #path to the folder where our genomes of interest are located
+OUTPUT_DIR="/home/ana/Genomas_nanopore/13.genomad_results" #output directory
+DB="/home/ana/Genomas_nanopore/genomad_db" #path to the geNomad databse
+
+THREADS=64
+
+mkdir -p "$OUTPUT_DIR" #create the output directory
+
+CONDA_ENV="genomad" #indicate the name of the conda environment where geNomad is already installed
+
+# Activate conda environment
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV"
+
+#Loop over all the fasta files 
+for fasta in "$INPUT_DIR"/*.fasta; do #be careful with the extension of fasta files, change it accordingly
+base=$(basename "$fasta" .fasta) #extract the name of each sample
+outdir="$OUTPUT_DIR/${base}_genomad" #the name of the output directory for each sample
+
+echo "========================================"
+echo "Processing $base"
+echo "========================================"
+
+#Pipeline
+    # 1. Annotate
+    genomad annotate "$fasta" "$outdir" "$DB" --threads $THREADS
+    # 2. Find proviruses
+    genomad find-proviruses "$fasta" "$outdir" "$DB"
+    # 3. Marker classification
+    genomad marker-classification "$fasta" "$outdir" "$DB"
+    # 4. NN classification
+    genomad nn-classification "$fasta" "$outdir"
+    # 5. Aggregated classification
+    genomad aggregated-classification "$fasta" "$outdir"
+    # 6. Score calibration
+    genomad score-calibration "$fasta" "$outdir"
+    # 7. Summary
+    genomad summary "$fasta" "$outdir"
+
+done
+```
+
+We will obtain a directory named `samplename_genomad` for each sample. Inside, we will find all these files and directories:
+
+``` r
+samplename_aggregated_classification      samplename_marker_classification.log
+samplename_aggregated_classification.log  samplename_nn_classification
+samplename_annotate                       samplename_nn_classification.log
+samplename_annotate.log                   samplename_score_calibration
+samplename_find_proviruses                samplename_score_calibration.log
+samplename_find_proviruses.log            samplename_summary
+samplename_marker_classification          samplename_summary.log
+```
+
+We strongly recommend that you visit the geNomad website to find out all the details about the results obtained.
+
+In turn, inside the directory `samplename_summary`we can find the following files:
+
+``` r
+samplename_plasmid.fna           samplename_plasmid_summary.tsv  samplename_virus_genes.tsv
+samplename_plasmid_genes.tsv     samplename_summary.json         samplename_virus_proteins.faa
+samplename_plasmid_proteins.faa  samplename_virus.fna            samplename_virus_summary.tsv
+```
+
+As you can deduce, there you have the fasta files of the potential plasmids, viruses, and also the fasta files of the predicted viral proteins.
+
+-The file `samplename_virus_genes.tsv` contains all the information regarding the predicted viral regions in the genome under study. For instance, it contains the name of each detected gene, the strand, the ribosome binding motif, the corresponding viral marker, e-value, the name of the assigned taxon, among other data.
+
+\-`samplename_plasmid_summary.tsv` is very similar, but it is related to potential plasmids found in the genome of interest. You can check if you get the same results with this tool and with Platon.
+
+\-`samplename_virus_summary.tsv` is one of the most useful files. It is a very detailed list of all proviruses detected in the genome, ant their main characteristics. Please, check the developers' website to go into more details.
+
+# 13. Detection of virulence factors
+
+There is a curated database that contains information about virulence factor many different bacterial pathogens, which is named [**Virulence Factor Database (VFDB)**](https://www.mgc.ac.cn/VFs/main.htm)[^16]. We are going to dowload it and perform BLAST of our bacterial genomes' against VFDB.
+
+[^16]: Zhou, S., Liu, B., Zheng, D., Chen, L., Yang, J., (2025) VFDB 2025: an integrated resource for exploring anti-virulence compounds. Nucleic Acids Res. 53:D871-D877. https://doi.org/10.1093/nar/gkae968
+
+So let's download the database firstly.
+
+::: callout-note
+VFDB contains two type of nucleotide datasets. One of them is called by the developers "**core dataset**" (setA), and it just included representative genes associated with experimentally verified Virulence Factors. The other onde, "**full dataset**" (setB) covers all genes related to already known and **predicted** VFs.
+
+You can find both of them in the VFDB website. But we will be restrictive in this tutorial and will use the setA (validated VFs genes)
+:::
+
+Thus:
+
+``` r
+wget https://www.mgc.ac.cn/VFs/Down/VFDB_setA_nt.fas.gz
+gzip -d the_data_base.fas.gz #decompress the downloaded file
+```
+
+Look at the format of the VFs name in the database:
+
+``` r
+>VFG037176(gb|WP_001081735) (plc1) phospholipase C [Phospholipase C (VF0470) - Exotoxin (VFC0235)] [Acinetobacter baumannii ACICU]
+ATGAATCGTCGCGAATTTCTTTTAAATTCTACAAAAACAATGTTTGGGACAGCTGCTCTA
+GCGAGTTTCCCGCTGAGTATTCAAAAAGCGTTAGCAATTGACGCCAAAGTTGAAAGTGGA
+ACAATTCAAGATGTTAAACACATTGTGATTTTGACTCAGGAAAACCGTTCATTTGATA
+```
+
+As you can see, there are free spaces separating the words. By default, BLAST truncates query sequence names when it encounters a blank space, and deletes the rest of the sequence name, so we must adapt all the names of the VFs in the database. Let's replace all the blank spaces by "\_"
+
+``` r
+#you should be in directory where the database is placed. In this example "/home/ana/Genomas_nanopore/"
+sed -i '/^>/ s/ /_/g' VFDB_setA_nt.fas #indicate the name of your database, here is "VFDB_setA_nt.fas"
+```
+
+Let's a look to the output:
+
+``` r
+head -n 2 VFDB_setA_nt.fas
+>VFG037176(gb|WP_001081735)_(plc1)_phospholipase_C_[Phospholipase_C_(VF0470)_-_Exotoxin_(VFC0235)]_[Acinetobacter_baumannii_ACICU]
+ATGAATCGTCGCGAATTTCTTTTAAATTCTACAAAAACAATGTTTGGGACAGCTGCTCTA
+```
+
+Now, the names of the VFs' sequences are well formatted. To look for VFs in our bacterial genomes, then we will perform a BLAST search. So it is time to adapt this database to the BLAST format, according to these command lines:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+INPUT_FASTA="/home/ana/Genomas_nanopore/VFDB_setA_nt.fas" #path to the directory where the genomes are stored
+
+OUTPUT_DIR="/home/ana/Genomas_nanopore/VFDB_parablast" #output directory
+
+DB_NAME="VFDB_setA_nt" #prefix of the database
+
+mkdir -p "$OUTPUT_DIR" #create output directory
+
+makeblastdb \
+    -in "$INPUT_FASTA" \
+    -dbtype nucl \ #indicate that we work with DNA sequences
+    -out "$OUTPUT_DIR/$DB_NAME"
+
+echo "......Database created"
+echo "Location: $OUTPUT_DIR/$DB_NAME"
+```
+
+In this example, these lines create the directory `VFDB_parablast`, which contains these files:
+
+``` r
+VFDB_setA_nt.ndb  VFDB_setA_nt.nin  VFDB_setA_nt.not  VFDB_setA_nt.ntf
+VFDB_setA_nt.nhr  VFDB_setA_nt.njs  VFDB_setA_nt.nsq  VFDB_setA_nt.nto #prefix + different extension
+```
+
+Now, we are ready to run BLAST of our bacterial genomes against VF's database:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+INPUT_DIR="/home/ana/Genomas_nanopore/05.renamed_contigs_fasta" #directory in which fasta files are located
+
+VFDB_DB="/home/ana/Genomas_nanopore/VFDB_parablast/VFDB_setA_nt" #path and prefix of the VF database adapted to run with BLAST
+
+OUTPUT_DIR="/home/ana/Genomas_nanopore/14.VF_blast_results" #output directory
+
+MIN_IDENTITY=80 #minimun similarity level. Change it according to your needs
+
+mkdir -p "$OUTPUT_DIR" #create output directory
+
+# Loop over all fasta files
+for fasta in "$INPUT_DIR"/*.fasta; do #be careful and check whether fasta files have the extension ".fasta". Otherwise, change it accordingly
+    
+    # Extract the names of the sample
+    sample=$(basename "$fasta" .fasta)
+
+    echo "--- searching Virulence Factors with blastn vs VFDB on sample $sample"
+
+    blastn \
+        -query "$fasta" \
+        -db "$VFDB_DB" \
+        -out "$OUTPUT_DIR/VF_${sample}.txt" \
+        -outfmt "6 std qlen slen" \ #BLAST output 6 format +  Query sequence length +  Subject sequence length
+        -culling_limit 1 \
+        -perc_identity "$MIN_IDENTITY"
+
+done
+
+echo "......BLAST search against VFDB finished"
+echo "......results written to $OUTPUT_DIR"
+```
+
+If you want the change BLAST parameters, you can more information about it [here](https://www.metagenomics.wiki/tools/blast).
+
+We want to be restrictive, so we will filter the results and recover just those hits that are similar to our bacterial genes in \> 80%, and the alignment coverage have to be also \> 90% of the subject length:
+
+``` r
+#!/usr/bin/env bash
+#This script is very similar to that of ARG detection, so see section #9 to understan each command line
+set -euo pipefail
+
+INPUT_DIR="/home/ana/Genomas_nanopore/14.VF_blast_results"
+
+OUTPUT_DIR="/home/ana/Genomas_nanopore/15.VF_filtered"
+
+MIN_IDENTITY=80
+MIN_COVERAGE=90
+
+FILTERED="$OUTPUT_DIR/blast_filtered_hits.txt"
+MATRIX="$OUTPUT_DIR/matrix_filtered_VF.txt"
+
+mkdir -p "$OUTPUT_DIR"
+rm -f "$FILTERED" "$MATRIX"
+
+echo "......processing BLAST results"
+
+awk -F'\t' \
+-v id="$MIN_IDENTITY" \
+-v cov="$MIN_COVERAGE" \
+-v filtered="$FILTERED" \
+-v matrix="$MATRIX" '
+
+BEGIN{
+FS="\t"
+}
+
+function sample_name(file){
+    gsub(".*/","",file)
+    gsub("VF_","",file)
+    gsub(".txt","",file)
+    return file
+}
+
+{
+
+if(NF==0) next
+
+sample=sample_name(FILENAME)
+samples[sample]=1
+
+identity=$3
+align_len=$4
+gene_len=$14
+
+coverage=100*align_len/gene_len
+
+if(identity>=id && coverage>=cov){
+
+gene=$2
+
+genes[gene]=1
+count[gene,sample]++
+
+print sample "\t" $0 >> filtered
+
+}
+
+}
+
+END{
+
+if(length(genes)==0){
+print "No virulence factors passed the filters." > matrix
+exit
+}
+
+ns=0
+for(s in samples){
+sample_list[ns]=s
+ns++
+}
+
+ng=0
+for(g in genes){
+gene_list[ng]=g
+ng++
+}
+
+printf("\t") > matrix
+for(i=0;i<ns;i++){
+printf("%s\t",sample_list[i]) >> matrix
+}
+printf("\n") >> matrix
+
+for(i=0;i<ng;i++){
+
+g=gene_list[i]
+
+printf("%s",g) >> matrix
+
+for(j=0;j<ns;j++){
+
+s=sample_list[j]
+
+v=count[g,s]
+if(v=="") v=0
+
+printf("\t%s",v) >> matrix
+
+}
+
+printf("\n") >> matrix
+
+}
+
+}
+
+' "$INPUT_DIR"/VF_*.txt
+
+echo "......matrix written to $MATRIX"
+echo "......filtered hits written to $FILTERED"
+```
+
+In case of VF detection, two different files are created: `blast_filtered_hits.txt`, containing all the results of the filtered BLAST, and `matrix_filtered_VF.txt`, a matrix indicating the presence or absence of VFs in each bacterial genome.
+
+# 14. Functional annotation
+
+There are several valid ways to assign a functional annotation to all sequences of our genomes of interest. In this tutorial, we will describe two of the most popular ones, based on the tools **Bakta** and **eggNOGmapper**.
+
+## 14.a) Functional annotation with Bakta
+
+Bakta[^17] is a powerful tool for the annotation of bacterial genomes and plasmdis. There is a lot of documentation available is [this website](https://github.com/oschwengers/bakta "click to see the user guide").
+
+[^17]: Schwengers, O., Jelonek, L., Dieckmann, M.A., Beyvers, S., Blom, J., Goesmann, A,. (2021). Bakta: rapid and standardized annotation of bacterial genomes via alignment-free sequence identification. Microbial Genomics, 7:000685. https://doi.org/10.1099/mgen.0.000685
+
+Firstly, we have to download the latest version of Bakta database and decompress it:
+
+``` r
+bakta_db download --type full --output full_db #you can also use 'wget'
+mkdir bakta_database
+tar -xf db.tar.xz -C bakta_database
+rm db.tar.xz #remove the compressed database to save disk space.
+```
+
+::: callout-note
+Sometimes the AMRFinder database itself causes problems, so it is advisable to update it in this way in case of having problems with it:
+
+``` r
+amrfinder_update --force_update   --database /home/ana/Genomas_nanopore/bakta_database/db/amrfinderplus-db
+```
+
+Although it may seem strange, the AMRFinder database has to be inside the own Bakta database directory.
+:::
+
+Let's run Bakta inside a loop and in parallel:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONDA_ENV="bakta" #indicate the name of the environment where Bakta is properly installed
+
+INPUT_DIR="/home/ana/Genomas_nanopore/05.renamed_contigs_fasta" #path to the directory where fasta files are located
+
+BAKTA_DB="/home/ana/Genomas_nanopore/bakta_database/db" #path to the Bakta database
+
+OUTPUT_DIR="/home/ana/Genomas_nanopore/16.bakta_results" #output directory
+
+JOBS=3 #number of jobs to be run in parallel. Change it according to your server
+
+#Activate conda environment
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV"
+
+mkdir -p "$OUTPUT_DIR" #create the output directory
+
+FILES=("$INPUT_DIR"/*.fasta) #fasta files and their extension. Be careful and change this part according to the extension of your fasta files
+
+#Run Bakta in parallel for all the files in the input directory
+time printf "%s\n" "${FILES[@]}" | parallel -j "$JOBS" '
+    fasta={}
+    sample=$(basename "$fasta" .fasta)
+
+    echo "Processing sample: $sample"
+
+    bakta \
+        --db "'"$BAKTA_DB"'" \
+        --force \
+        --output "'"$OUTPUT_DIR"'/${sample}_bakta" \
+        "$fasta"
+'
+
+echo "......Annotation already finished"
+echo "......Results saved in $OUTPUT_DIR"
+```
+
+These commands generate a directory for each analyzed genome, where you can find all these files:
+
+``` r
+samplename.embl  samplename.gff3               samplename.log
+samplename.faa   samplename.hypotheticals.faa  samplename.png
+samplename.ffn   samplename.hypotheticals.tsv  samplename.svg
+samplename.fna   samplename.inference.tsv      samplename.tsv
+samplename.gbff  samplename.json               samplename.txt
+```
+
+We will focus in these files:
+
+\-`samplename.txt`: this file can help us to understand the overall landscape of the genomes under study, since it give us information about the contigs' length, the number of tRNAs, rmRNAs, rRNAs, ncdRNAS, CRISPR arrays, among other data.
+
+\-`samplename.tsv`: it includes information about the type of all annotated loci (type: rRNA, tRNA, CDS, ncRNA, etc.), the coordinates, the strand, the name and the product of the gene, among others.
+
+As you can see in the output, this software can give us the map of each genome in PNG and SVG files.
+
+## 14.b) Functional annotation with eggNOG-mapper
+
+Another useful, powerful for genome annotation is the [program **eggNOG-mapper**](https://github.com/eggnogdb/eggnog-mapper/wiki/eggNOG-mapper-v2.1.5-to-v2.1.13#user-content-Basic_usage "click to the user manual")[^18], also known as *emapper*. It uses precomputed orthologous groups (OGs) and phylogenies from the eggNOG database[^19] to transfer functional information from fine-grained orthologs only, so firstly we have to download the database:
+
+[^18]: Cantalapiedra, C.P., Hernández-Plaza, A., Letunic, I., Bork, p., Huerta-Cepas, J., (2021) eggNOG-mapper v2: Functional Annotation, Orthology Assignments, and Domain Prediction at the Metagenomic Scale, Molecular Biology and Evolution, 38:5825–5829. https://doi.org/10.1093/molbev/msab293
+
+[^19]: Huerta-Cepas, J., Szklarczyk, D., Heller, D., Hernández-Plaza, A., Forslund, S.K., *et al.*, (2019), eggNOG 5.0: a hierarchical, functionally and phylogenetically annotated orthology resource based on 5090 organisms and 2502 viruses, Nucleic Acids Research, 47:D309–D314, https://doi.org/10.1093/nar/gky1085
+
+``` r
+wget -r http://eggnog5.embl.de/download/emapperdb-5.0.2/ #-r because there are many directories inside, and we want to download all of them
+cd /home/ana/Genomas_nanopore/eggnog5.embl.de/download/eggnog_5.0/ 
+gunzip *.gz #decompress the file in .gz extension
+tar -xzvf *.tar.gz #decompress all the files in .tar.gz extension
+```
+
+We can now run these commands to annotate our genomes of interest:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+GENOMES_DIR="/home/ana/Genomas_nanopore/05.renamed_contigs_fasta" #path to the directory where the fasta files are stored
+DB_DIR="/home/ana/Genomas_nanopore/eggnog5.embl.de/download/emapperdb-5.0.2/" #path to the eggnog database
+OUT_DIR="/home/ana/Genomas_nanopore/17.eggnogmapper_results" #output directory
+
+THR=48
+
+CONDA_ENV="nanopore" #name of the environment where emapper.py file is located
+
+#Activate conda environment
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV"
+
+mkdir -p "${OUT_DIR}" #create ouput directory
+
+#Loop over fasta files
+for GENOME in "${GENOMES_DIR}"/*.fa "${GENOMAS_DIR}"/*.fna "${GENOMES_DIR}"/*.fasta; do #it works well for different fasta file formats
+    [ -e "$GENOME" ] || continue
+
+    NAME=$(basename "$GENOME")
+    PREFIX=${NAME%.*}
+
+    emapper.py \
+        -i "$GENOME" \
+        -o "$PREFIX" \
+        --output_dir "$OUT_DIR" \
+        --itype genome \ #type of data input. Be careful because "proteins" is by default
+        --translate \ #translate predicted CDS to proteins
+        --genepred prodigal \ #method to perform gene prediction (more opt: DIAMOND, MMseqs2)
+        --cpu "$THR" \
+        -m diamond \ #search seed orthologs (more opt: mmseqs, hhmer,..)
+        --data_dir "$DB_DIR"
+
+done
+
+echo "......Annotation already finished"
+echo "......Results saved in $OUTPUT_DIR"
+```
+
+EggNOG-mapper gives us different files for each genome:
+
+``` r
+samplename.emapper.annotations
+samplename.emapper.genepred.fasta
+samplename.emapper.genepred.gff
+samplename.emapper.hits
+samplename.emapper.seed_orthologs
+```
+
+We will focus on some of the in this tutorial:
+
+\-`samplename.genepred.fasta`: this file includes the sequences of predicted CDS (just if the options *genome* or *metagenome* were selected for *itype* flag).
+
+\-`samplename.emapper.annotations`: this file is really useful since each row represent the annotation for a given query. There ar different columns indicating the ortholog, e-value, score, COG categories, Description of the predicted function, associated EC, KEGG identifiers, CAZys, among others.
+
+# 15. Detection of secretion systems
+
+Some of VFs detected in the section [13. Detection of virulence factors] are functionally classified as "*Effector delivery system*". Secretion systems are usually composed by different proteins, so if we want to know if all the genes needed to code all the elements of a secretion system are in a our genomes of interest, we can use the [models of **TXSScan**](https://github.com/macsy-models/TXSScan)[^20], integrated in the [tool **MacSyFinder**](https://macsyfinder.readthedocs.io/en/latest/)[^21].
+
+[^20]: Abby, S., Cury, J., Guglielmini, J. *et al*., (2016) Identification of protein secretion systems in bacterial genomes. Sci Rep 6:23080. https://doi.org/10.1038/srep23080
+
+[^21]: Abby, S.S., Néron, B., Ménager, H., Touchon, M., Rocha, E.P.C., (2014). MacSyFinder: A Program to Mine Genomes for Molecular Systems with an Application to CRISPR-Cas Systems. PLoS ONE, 9:e110726. https://doi.org/doi:10.1371/journal.pone.0110726
+
+After the installation of MacSyFinder, we need to install the models, since this software is based on Hidden Markov Models (HMM). For that end, you have to run this command:
+
+``` r
+msf_data install --user TXSScan
+```
+
+Once the models are installed, you just have to run the following lines. In this case, the software works with the sequences of the predicted CDS. You can use the annotations made by Bakta or eggNOG-mapper (or whichever software you use for functional predictions). In this tutorial, we will use the results given by eggNOG-mapper.
+
+``` r
+#!/bin/bash
+set -euo pipefail
+
+INPUT_DIR="/home/ana/Genomas_nanopore/17.eggnogmapper_results" #path to the directory where the predicted CDS in fasta file format are stored.
+
+OUTPUT_DIR="/home/ana/Genomas_nanopore/18.TXSScan_results" #output directory
+
+CPU=64
+
+CONDA_ENV="nanopore" #indicate the name of the environment where macsyfinder is installed
+
+mkdir -p "$OUTPUT_DIR" #create output directory
+
+#Activate conda environment
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV"
+
+# Loop over all fasta files
+find "$INPUT_DIR" -type f -name "*.fasta" | while read fasta_file; do #be careful and take into account the extension of the fasta files (Bakta gives .faa extension while emapper gives .fasta files)
+
+    # Extract the name of the files, whithout the extension. Change the extension accordingto your files
+    base_name=$(basename "$fasta_file" .fasta)
+    
+    # Create a directory for each genome
+    out_dir="$OUTPUT_DIR/${base_name}_TXSScan"
+    mkdir -p "$out_dir"
+    
+    echo "Running TXSScan over $fasta_file ..."
+    
+    # Execute MacSyFinder / TXSScan
+    macsyfinder --sequence-db "$fasta_file" \ #Path to the sequence dataset in fasta format
+                --models TXSScan all \ #the models to search. Select among "TXSS Flagellum T2SS", "CRISPRcas/subtyping all" (model described for CRISPERcas subfamilies), and "TXSS all" (all available models)
+                --db-type ordered_replicon \ #type of dataset. If you are working with assembled genomes select "ordered_replicon", "unordered" for non-assembled genomes, and "gembase" for sets of replicons following a specific structure (see user guide)
+                -o "$out_dir" \
+                -w "$CPU"
+    
+    echo "Finishing $fasta_file -> Results stored in $out_dir"
+done
+
+echo "TXSScan finished for all fasta files"
+```
+
+A new folder will be created for each genome, inside which you find these files:
+
+``` r
+all_best_solutions.tsv  all_systems.txt           best_solution_multisystems.tsv  best_solution.tsv  macsyfinder.conf  rejected_candidates.tsv
+all_systems.tsv         best_solution_loners.tsv  best_solution_summary.tsv       hmmer_results      macsyfinder.log   rejected_candidates.txt
+```
+
+We suggest you to have a look at the user guide to better understand all these files and `hmmer_results` directory.
+
+The file `best_solution_summary.tsv` is the one that tells us the total number of secretion systems detected in each genome under study, while `best_solution.tsv` includes many details about those secretion systems with the higher score. The latter includes the name of the replicons, the name of the detected gene, loci, wholeness of the secretion system, coverage, among many other details.
+
+# 16. Detection of genes involved in secondary metabolite production
+
+Secondary metabolites could be very important in the survival and general fitness of plant-associated bacteria. So, we will use the [tool **antiSMASH**](https://docs.antismash.secondarymetabolites.org/ "click for more details")[^22] to detect clusters of co-occurring biosynthesis genes in genomes. They are known as **Biosynthetic Gene Clusters** (BGCs).
+
+[^22]: Blin, K., Shaw, S., Vader, L., Szenei, J., Reitz, Z.L., *et al.*, antiSMASH 8.0: extended gene cluster detection capabilities and analyses of chemistry, enzymology, and regulation, Nucleic Acids Research, 53:W32–W38, https://doi.org/10.1093/nar/gkaf334
+
+First, we have to download the antiSMASH database:
+
+``` r
+download-antismash-databases
+```
+
+Then, we have just to run these lines:
+
+``` r
+#!/bin/bash
+set -euo pipefail
+
+INPUT_DIR="/home/ana/Genomas_nanopore/05.renamed_contigs_fasta" #path to the directory containing all the assembled genomes
+OUTPUT_DIR="/home/ana/Genomas_nanopore/19.antismash_results" #output directory
+
+CPU=64
+
+mkdir -p "$OUTPUT_DIR" #create the output directory
+
+CONDA_ENV="antismash8" #indicate the name of the environment where atniSMASH is installed
+
+#Activate conda environment
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV"
+
+#Loop over all fasta files
+for genome in "$INPUT_DIR"/*.fasta; do #be careful here, change it according to your fasta files' extension
+    base=$(basename "$genome")
+    sample=${base%%.*} #extract the name of the samples without the extension
+
+    echo ">>> Processing sample: $sample"
+
+    antismash \
+        "$genome" \
+        --output-dir "$OUTPUT_DIR/$sample" \
+        --output-basename "$sample" \ #similar to a prefix for each sample name
+        --taxon bacteria \ #you can choose between bacteria and fungi (synonymous: -t)
+        --cpus $CPU" \
+        --genefinding-tool prodigal \ #algorithm for gene finding. Options: prodigal (Prodigal), prodigal-m (Prodigal Metagenomic/Anonymous mode), none
+        --cb-knownclusters \ #Compare identified clusters against known gene clusters from the MIBiG database
+        --cb-subclusters \ #Compare identified clusters against known subclusters responsible for synthesising precursors
+        --asf \ #Run active site finder analysis
+        --pfam2go #Run Pfam to Gene Ontology mapping module
+done
+
+echo ">>> All the analyses performed"
+```
+
+antiSMASH program includes a lot of possibilities, so we encourage the user to inspect carefully the user manual.
+
+The previous command lines create a directory for each genome under study. In each folder you can find many files and the `index.html` file. It will open an interactive website where you can find all the *regions* (you can find the definition of this concept [here](https://docs.antismash.secondarymetabolites.org/understanding_output/regions/#candidate-cluster-types)). If you click on each region, you will see the loci that compose it, the coordinates, the potential product and its function, even the similarity confidence and the most similar known cluster. There are many different possibilities you can explore!
+
+# 17. Annotation of CAZymes
+
+It is possible to determine where our bacteria of interest contain genes involved in the CAZyme biosynthesis, as well as CAZyme Gene Clusters (CGC). To annotate these enzymes, we can use the [tool **dbCAN**](https://run-dbcan.readthedocs.io/en/latest/getting_started/installation.html)[^23] and the corresponding [database](https://pro.unl.edu/dbCAN2/) this program is based on.
+
+[^23]: Zheng, J., Ge, Q., Yan, Y., Zhang, X., Huang, L., Yin, Y. (2023) dbCAN3: automated carbohydrate-active enzyme and substrate annotation, Nucleic Acids Research, 51: W115–W121, https://doi.org/10.1093/nar/gkad328
+
+Firstly, we have to download the database of dbCAN. Let's create a new directory to host it:
+
+``` r
+mkdir dbCAN_db
+cd dbCAN_db
+```
+
+Now, download all the elements that compose the database:
+
+`{r.} wget http://dbcan-hcc.unl.edu/download/dbCAN-HMMdb-V14.txt wget http://dbcan-hcc.unl.edu/download/Databases/CAZyDB.07262023.fa wget http://dbcan-hcc.unl.edu/download/Databases/dbCAN_sub.hmm wget http://dbcan-hcc.unl.edu/download/Databases/tcdb.fa`
+
+Each element of the database has to be "formatted", so run these lines:
+
+``` r
+hmmpress dbCAN-HMMdb-V14.txt #it creates files with the extension .h3f, .h3i, .h3m, .h3p
+hmmpress dbCAN_sub.hmm #it creates a file with the extension .sub.hmm
+diamond makedb --in CAZyDB.07262023.fa -d CAZy #it creates a file with the extension .dmnd
+diamond makedb --in tcdb.fa -d tcdb #it creates a file with the extension .dmnd
+```
+
+So, we will have this files in the database directory:
+
+``` r
+CAZy.dmnd           dbCAN-HMMdb-V8.txt.h3f  dbCAN-HMMdb-V8.txt.h3m  dbcan_out      dbCAN_sub.hmm.h3f  dbCAN_sub.hmm.h3m  tcdb.dmnd
+dbCAN-HMMdb-V8.txt  dbCAN-HMMdb-V8.txt.h3i  dbCAN-HMMdb-V8.txt.h3p  dbCAN_sub.hmm  dbCAN_sub.hmm.h3i  dbCAN_sub.hmm.h3p
+```
+
+Now, we are ready to run the command ***run_dbCAN***
+
+``` r
+#!/bin/bash
+set -euo pipefail
+
+INPUT_DIR="/home/ana/Genomas_nanopore/17.eggnogmapper_results" #path to the annotation results
+OUT_BASE="/home/ana/Genomas_nanopore/20.dbCAN_results" #output directory
+DB_DIR="/home/ana/Genomas_nanopore/dbCAN_db" #path to the directory containing the database
+DB_HMM_FILE="$DB_DIR/dbCAN-HMMdb-V14.txt" #path to the HMM dabase
+
+DIA_CPU=64
+HMM_CPU=64
+
+CONDA_ENV="run_dbcan_env" #write the name of the environment where dbCAN is installed
+
+mkdir -p "$OUT_BASE" #create the ouput directory
+
+# Activate conda environment
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate run_dbcan_env
+
+# Loop over all fasta files
+for fasta_file in "$INPUT_DIR"/*.emapper.genepred.fasta; do #be careful and adapt this line to your fasta files name format
+    #extract the name of the samples
+    strain_name=$(basename "$fasta_file" .emapper.genepred.fasta)
+    
+    # Look for the corresponding GFF files. They are needed for CGCs prediction
+    gff_file=$(find "$INPUT_DIR" -maxdepth 1 -type f -name "$strain_name*.gff" | head -n 1)
+    
+    #create an output directory for each genome/sample
+    OUT_DIR="$OUT_BASE/$strain_name" 
+    mkdir -p "$OUT_DIR"
+    
+    if [[ ! -f "$gff_file" ]]; then
+        echo "GFF missing for $strain_name, skipping it..."
+        continue
+    fi
+    
+    echo "Processing $strain_name ..."
+    
+    run_dbcan "$fasta_file" protein \
+        -c "$gff_file" \ #Predict CGCs via CGCFinder
+        --out_dir "$OUT_DIR" \
+        --db_dir "$DB_DIR" \
+        --dbCANFile "$DB_HMM_FILE" \ #name of the HMM database
+        --dia_cpu "$DIA_CPU" \ #number of CPU for DIAMOND
+        --hmm_cpu "$HMM_CPU" \ #number of CPU for HMMER
+        --cgc_sig_genes all #CGCFinder Signature Genes value (options: all; tp; tf)
+    
+    echo "Finalizado $strain_name"
+done  # Cierre del bucle for
+
+echo "Todos los archivos procesados."
+```
+
+Take into account all the potential parameters than could be changed. You can have a look at the dbCAN developers' recommendations [here](https://dbcan.readthedocs.io/en/latest/api/index.html).
+
+A folder for each genome/sample will be created. Inside it, we will find this files:
+
+``` r
+cgc.gff           diamond.out  overview.txt  tf-2.out
+cgc.out           eCAMI.out    stp.out       tp.out
+cgc_standard.out  hmmer.out    tf-1.out      uniInput
+```
+
+In brief, they contain:
+
+\-`uniInput`: it is the file that Prodigal creates if nucleotide fastas are used.
+
+\-`hmmer.out`: HMMER output file.
+
+\-`tf.out`: DIAMOND output file, corresponding to the prediction of Transcriptional Factors.
+
+\-`tc.out`: the same as tf.out, but for transporter classifications.
+
+\-`cgc_standard.out`: a summaryzed version of `cgc.out`. It contains all the information referred to the CGCs (CAZyme Gene Cluster), for instance, the CGC id, type (CAZyme, TC, TF, STPS or *Signal Transduction Proteins*) or even null, and annotation, among others.
+
+\-`overview.txt`: this is the most interesting file, since it gives us a summary of all the predictions made by CGCFinder, HMMER, DIAMOND, etc. It shows us the EC Code, gene ID, etc. for each annotated gene.
+
+It is highly recommended to visit the dbCAN website to gain more information about all the outputs and their meaning.
+
+# 18. Identification of potential interactions host-pathogens
+
+We will use the [database **PHI-base**](http://www.phi-base.org/)[^24] to catalogue the potential pathogenicity, virulence and effector genes of our bacteria of interest. This database is based on empirically verified data, and it can be used for different microorganisms (bacteria, fungi, oomycetes) and to search for interactions with different types of hosts (animal, plants, fungi and insects).
+
+[^24]: Urban, M., Cuzick, A., Seager, J., Nonavinakere, N., Sahoo, J., *et al*., (2025) PHI-base – the multi-species pathogen–host interaction database in 2025, Nucleic Acids Research, 53:D826–D838, https://doi.org/10.1093/nar/gkae1084
+
+Although there is web-server available, we will download the corresponding database and run BLAST against it. This database contains the sequences in fasta format of different proteins related to virulence and pathogenicity. For that purpose, we will use the sequence of the proteins predicted by eggNOG-mapper, and then BLASTp to align them against the PHI-database
+
+Let's download the latest database:
+
+``` r
+wget https://raw.githubusercontent.com/PHI-base/data/master/releases/phi-base_current.fas
+```
+
+If we have a look at the download file, we can see than the name of the sequences are too long in some cases. In the following example, the name of the sequences contains 90 characters!
+
+``` r
+>A0A014N184#PHI:124318#Eng1#92637#Metarhizium_acridum#increased_virulence_(hypervirulence)
+MQRYGRDDHQEREPLGGPPDYNTPPRQAGGNVYNYDYAAADSPYYDDASPPRPQDAFRMQQQHQPYQSYQSYVGHDASSAGRGYGHEAVAPAPPQHNDFTAYNRGPAQQGQDHPYAQHVAQSNITPGADNFGEHASGGMAGIAYSVADHRAHEGGMEAAGGIGQLPPPPSRSQYPNTHDAGFNNSQPGGYAPETVYNRGPGQHQLPAQGSGSSLNPFNTPSATHSPTRSLRSFGGESFGDEPYQAMPTN
+```
+
+BLAST does not work well with so long sequence names (longer than 50 characters), so we have to shorten them:
+
+``` r
+#!/bin/bash
+set -euo pipefail
+
+PHI_FAA="/home/ana/Genomas_nanopore/PHI-base_basedatos.txt" #path to the already dowloaded PHI-database
+
+PHI_FAA_SHORT="/home/ana/Genomas_nanopore/PHI-base_proteins_short.faa" #path and name of the modified PHI-database
+
+# Shorten the heades (just the first word until it finds the first blank space) 
+awk '/^>/ {print ">" substr($1, 2, 50); next} {print}' "$PHI_FAA" > "$PHI_FAA_SHORT" #you can adapt the length of the header
+
+echo "Headers modified to 50 characters"
+echo "Modified PHI-database ready to use with BLAST: $PHI_FAA_SHORT"
+```
+
+As we performed before, we have to adapt the modified database to BLAST-format. Run these commands:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+PHI_FASTA="/home/ana/Genomas_nanopore/PHI-base_proteins_short.faa" #path to the modified version of the PHI-database
+
+DB_DIR="/home/ana/Genomas_nanopore/PHI_db_parablast" #path to the directory where the BLAST-adapted database will be stored
+
+DB_NAME="PHI_db" #prefix of the BLAST-database
+
+mkdir -p "$DB_DIR" #create the directory
+
+makeblastdb \
+    -in "$PHI_FASTA" \
+    -dbtype prot \ #be careful! Now we are working with proteins
+    -out "$DB_DIR/$DB_NAME" \
+    -parse_seqids
+
+echo "......BLAST database already cread"
+echo "......It is stored in: $DB_DIR/$DB_NAME"
+```
+
+Now, let's run BLASTp. In this case, we have included the filtering step of BLASTp outputs (remove all hits \< 80% similarity and \< 80% alignment coverage).
+
+``` r
+#!/bin/bash
+set -euo pipefail
+
+INPUT_DIR="/home/ana/Genomas_nanopore/17.eggnogmapper_results"#path to the directory that contains the annotations made by eggNOG-mapper
+
+PHI_DB="/home/ana/Genomas_nanopore/PHI_db_parablast/PHI_db" #path to PHI database
+
+OUT_DIR="/home/ana/Genomas_nanopore/21.PHI_results" #output directory
+
+mkdir -p "$OUT_DIR" #create output directory
+
+THREADS=64
+OUTFMT="6 std qlen slen" #BLAST output format
+CULLING_LIMIT=1
+
+#Look for all .fasta files
+find "$INPUT_DIR" -type f -name "*.fasta" | while read fasta_file; do
+
+    # Extract de directory containing the genomes to get all the sample's name
+    sample=$(basename "$fasta_file" .fasta)    
+    # Output files'name
+    out_file="$OUT_DIR/${sample}_vs_PHI.out"
+    filtered_out="$OUT_DIR/${sample}_vs_PHI.filtered.out"
+    
+    echo "Processing $sample"
+    
+    # BLASTP
+    blastp -query "$fasta_file" \
+           -db "$PHI_DB" \
+           -out "$out_file" \
+           -outfmt "$OUTFMT" \
+           -culling_limit "$CULLING_LIMIT" \
+           -num_threads "$THREADS"
+
+ # Filter the hits (>80% similarity and >80% alignment coverage)
+   awk '{cov=$4/$14; if($3>=80 && cov>=0.9) print}' "$out_file" > "$filtered_out" #change this parameters according to you interests
+    
+    echo "Redy: $sample"
+done
+
+echo "All BLASTp finished."
+```
+
+As a result, we can find two files:
+
+\-`samplename.out`: it contains all the results obtained by BLASTp.
+
+\-`samplename.filtered.out`: it just contains the results of the BLASTp filtering. That is, just those hits that pass the cut-off of similarity and coverage. The format of the results fits BLAST standard 6 format, including also the length of the query and subject sequences.
+
+But remember that we shortened the name of the sequences in the PHI-database, and we need the keep the original name. So, let's recover the full name of the sequences in the PHI-database. Run these line to recover the original names:
+
+``` r
+#!/bin/bash
+set -euo pipefail
+
+PHI_FULL="/home/ana/Genomas_nanopore/PHI-base_basedatos.txt" #path to the original PHI-database
+
+PHI_SHORT="/home/ana/Genomas_nanopore/PHI-base_proteins_short.faa" #path to the modified PHI-database
+
+RESULTS_DIR="/home/ana/Genomas_nanopore/21.PHI_results" #path to BLASTp results
+
+MAP_FILE="phi_id_mapping.tsv"
+
+# Extracts full headers
+grep "^>" "$PHI_FULL" | sed 's/^>//' > full_headers.tmp
+
+# Extracts modified headers
+grep "^>" "$PHI_SHORT" | sed 's/^>//' > short_headers.tmp
+
+# Creates a map that matches modified-hull headers
+paste short_headers.tmp full_headers.tmp > "$MAP_FILE"
+
+rm full_headers.tmp short_headers.tmp
+
+echo "Processing filtered files..."
+
+#Loop over all the filtered files
+for file in "$RESULTS_DIR"/*.filtered.out; do
+    
+    output_file="${file%.filtered.out}.annotated.tsv" #creates a file that contains all the filtered results with the full headers
+    
+    awk -F'\t' 'BEGIN{
+        OFS="\t"
+        while((getline < "'$MAP_FILE'")>0){
+            split($0,a,"\t")
+            map[a[1]]=a[2]
+        }
+    }
+    {
+        full_name = ($2 in map) ? map[$2] : "NA"
+        print $0, full_name
+    }' "$file" > "$output_file"
+    
+done
+
+echo "Process finished."
+```
+
+These script generated one new file for each genome under study, namely `samplename.annotated.tsv`. This file contains all the results of BLASTp filtered according to specified cut-offs of similarity and coverage, and one column indicating the full name of each hit.
+
+::: callout-warning
+Be careful. The first column of `samplename.annotated.tsv` still contains the truncated sequence names of the hits. Do not pannic, you can find the original names in the last column.
+:::
+
+To better undertand the hits you obtain, it is highly recommended to visit the [PHI-database website](http://www.phi-base.org/), specially the section entitled "***Search***".
+
+# 19. Detection of PGPR traits
+
+Most plant-associated bacteria are able to fix atmospheric N2, solubilize minerals, produce siderophores, among many other plant-beneficial capabilities. Hence, they are usually called ***Plant Growth Promoting (Rhizo)Bacteria*** (PGPR or PGPB)[^25].To study genes potentially involved in this activities, we will use a website to perform this analysis, namely \[**PLant-associated BActeria web resource (PLaBAse)** web\] (https://plabase.cs.uni-tuebingen.de/pb/plabase.php).
+
+[^25]: Patz, S., Gautam, A., Becker, M., Ruppel, S., Rodríguez-Palenzuela, P., Huson, D.H. (2021) PLaBAse: A comprehensive web resource for analyzing the plant growth-promoting potential of plant-associated bacteria. bioRxiv 2472471. https://doi.org/10.1101/2021.12.13.472471
+
+There are two services that stand out: **PIFAR-Pred** and **PGPT-Pred**. The former one is very useful to annotate just plant bacterial interaction factors, by using BLASTp+HMMER against a database. The latter is aimed at annotating bacterial plant growth-promoting proteins.
+
+In both cases, it is necessary to upload the predicted sequence of the proteins in fasta format.
+
+The website is very well documented, so you can follow easily their [user manual](https://plabase.cs.uni-tuebingen.de/pb/manual.php "click to download the user guide").
+
+In both cases you will obtain a pie chart indicating the percentaje of each annotated category, also a Krona chart, and all the annotation results in a .txt file.
+
+# 20. Detection of repeated DNA sequences
+
+If you want to screen DNA sequences for interspersed repeats, and low complexity DNA sequences you should use these programs: [**RepeatModeler**](https://github.com/Dfam-consortium/RepeatModeler?tab=readme-ov-file "click to the user guide")[^26] and [**RepeatMasker**](https://www.repeatmasker.org/RMDownload.html "click for more info")[^27].
+
+[^26]: Flynn, J.M., Hubley, R., Goubert, C., J. Rosen, Clark, A.G., Feschotte, C., Smit, A.F. (2020) RepeatModeler2 for automated genomic discovery of transposable element families, Proc. Natl. Acad. Sci. U.S.A. 117:9451-9457, https://doi.org/10.1073/pnas.1921046117.
+
+[^27]: Tarailo-Graovac, M., Chen, N., (2009) Using RepeatMasker to identify repetitive elements in genomic sequences. Curr Protoc Bioinformatics. 4:4.10.1-4.10.14. https://doi.org/10.1002/0471250953.bi0410s25.
+
+## 20.a) RepeatModeler
+
+RepeatModeler assists in automating the runs of the various algorithms given a genomic database, clustering redundant results, refining and classifying the families and producing a high quality library of TE (Transposable Elements) families suitable for use with RepeatMasker. This program needs to create a database firstly (similar to that we made to perform BLAST searches). Then, we just have to run RepeatModeler. We have developed these line to run the program:
+
+``` r
+#!/bin/bash
+set -euo pipefail
+
+GENOME_DIR="/home/ana/Genomas_nanopore/05.renamed_contigs_fasta" #path to the directory where fasta files of the genomes are stored.
+
+OUTPUT_DIR="/home/ana/Genomas_nanopore/22.RepeatModeler_results" #output directory
+
+CPU=64 #change according to your server
+CONDA_ENV= "repeatmodeler" #indicate the name of the environment where RepeatModeler is installed
+
+mkdir -p "$OUTPUT_DIR" #create output directory
+
+#activate conda environment
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate $CONDA_ENV
+
+# Loop over all the genomes included in the input directory 
+find "$GENOME_DIR" -type f \( -name "*.fasta" -o -name "*.fa" -o -name "*.fna" \) | while read fasta_file; do #finding fasta files regardless their extension
+
+    # Extract the base name of the samples
+    base_name=$(basename "$fasta_file")
+    base_name=${base_name%%.*}  # remove the extension
+
+    # Create a specific directory to save each result
+    out_dir="$OUTPUT_DIR/${base_name}_RepeatModeler"
+    mkdir -p "$out_dir"
+
+    echo "Processing $fasta_file ..."
+
+    # Construct the database for RepeatModeler. Is similar to a wrapper around BLAST database creation script
+    BuildDatabase -name "$base_name" "$fasta_file" -engine ncbi
+    #-name: the name of the database to create
+    #-engine: the name of the search engine we are using
+    
+
+    # Run RepeatModeler
+    RepeatModeler -database "$base_name" -pa "$CPU" #the database we have just created
+
+    # Move the results to the output directory
+    mv "$base_name"* "$out_dir"/ 2>/dev/null || true
+
+    echo "Finished: $fasta_file -> results in $out_dir"
+done
+
+echo "RepeatModeler completed for all genomes under study"
+```
+
+After running this script, we obtain one directory for each genome studied. In this folder, we can see all these files:
+
+``` r
+samplename-families.fa
+samplename-families.stk
+samplename.nhr
+samplename.nin
+samplename.nnd
+samplename.nni
+samplename.nog
+samplename.nsq
+samplename.translation
+```
+
+`samplename-families.fa` is the file that contains all the consensus sequences in fasta file. It is useful to search in specialized libraries such by means of RepeatMasker.
+
+::: callout-note
+The script also generates temporary files containing all the information needed for debugging in case of errors. These files are stored in the working directory (that is, outside the output directory, since it had not yet been created). The directory names follow this format: `RM_PID_DATE`. You can remove them if you are aware the program did run well.
+:::
+
+## 20.b) RepeatMasker
+
+RepeatMasker is a popular software to identify, classify, and mask repetitive elements, including low-complexity sequences and interspersed repeats. RepeatMasker searches for repetitive sequence by aligning the input genome sequence against a library of known repeats. It replaces repeated regions by "N" (or the symbol you want). The program needs the models previously created with RepeatModeler, and the fasta files of the genomes we are analyzing.
+
+``` r
+#!/bin/bash
+set -euo pipefail
+
+GENOME_DIR="/home/ana/Genomas_nanopore/05.renamed_contigs_fasta" #input directory where fasta files of the genomes are stored
+RM_DIR="/home/ana/Genomas_nanopore/22.RepeatModeler_results" #directory where RepeatModeler results are stored
+OUTPUT_DIR="/home/ana/Genomas_nanopore/23.RepeatMasker_results" #putput directory
+
+CPU=64 #change it according to your server
+CONDA_ENV="repeatmodeler" #indicate the name of the conda environment where RepeatMasker is installed
+
+mkdir -p "$OUTPUT_DIR" #create the output directory
+
+# Activate conda environment
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate $CONDA_ENV
+
+#Loop over all genomes
+find "$GENOME_DIR" -type f \( -name "*.fasta" -o -name "*.fa" -o -name "*.fna" \) | while read genome; do #search fasta files regardless of their extension
+
+    #extract the name of the samples/genomes without extension
+    base=$(basename "$genome")
+    base=${base%%.*}
+
+    echo "Processing: $base"
+
+    # Look for the corresponding directory of RepeatModeler
+    RM_GENOME_DIR=$(find "$RM_DIR" -maxdepth 1 -type d -name "${base}*" | head -n 1)
+
+    if [[ -z "$RM_GENOME_DIR" ]]; then
+        echo "The directory of RepeatModeler for $base was not found"
+        continue
+    fi
+
+    # Look for the library that RepeatModeler used
+    LIB=$(find "$RM_GENOME_DIR" -maxdepth 1 -type f -name "*-families.fa" | head -n 1)
+
+    if [[ -z "$LIB" ]]; then
+        LIB=$(find "$RM_GENOME_DIR" -maxdepth 1 -type f -name "*-families.fa" | head -n 1)
+    fi
+
+    if [[ -z "$LIB" ]]; then
+        echo "No -families.fa file was found for  $base"
+        continue
+    fi
+
+    OUT_DIR="$OUTPUT_DIR/${base}_RepeatMasker" #create a directory for each genome
+    mkdir -p "$OUT_DIR"
+
+    #Run RepeatMasker:
+    RepeatMasker \
+        -pa "$CPU" \ #number of CPUs
+        -lib "$LIB" \ #name of the library
+        -gff \ #creates an additional Gene Feature Finding format output
+        -x \ #returns repetitive region masked with X letter
+        -excln \ #calculate repet densities
+        -dir "$OUT_DIR" \
+        "$genome"
+
+    echo "Finished $base"
+
+done
+```
+
+As output, we obtain one directory for each genome. Inside these folders, we can see that we have different files:
+
+\-`basename.fasta.cat`: this file contains the alingment of the genomes against the previously obtained models.
+
+\-`basename.fasta.masked`: fasta file in which the sequence of repetitive elements are masked (in this example, with "X".)
+
+\-`basename.fasta.out`. This file is readable in the terminal. It shows us the best results obtained by RepeatMasker (according to the establishec cut-off, in this example it was left by default). We can see there the Smith-Waterman socre, the name of the sequences, the beggining and the end of the query, among other parameters. If you want more details about this file, have a look at [this website](https://www.repeatmasker.org/webrepeatmaskerhelp.html).
+
+\-`basename.fasta.out.gff`: (the same in gff format).
+
+\-`basename.fasta.tbl`: this table is readable in the terminal. It gives us the number of repetitive elements detected and their type (i.e., SINE, Line, etc.), among other parameters.
+
+# 21. Identification of Genomic Islands
+
+The web server [**Island Viewer**](https://www.repeatmasker.org/webrepeatmaskerhelp.html)[^28] is a sound tool to detect and identify genomic islands (GI) in prokaryotic genomes. With this tool, it is possible to predict and interactively visualize GIs. It is based in different tools (**IslandViewer**, **IslandPick**, **SIGI-HMM**, **IslandPath-DIMOB** and **Islander**), is very intuitive and you just need to upload the genome annotations in EMBL or GenBank formats. For example, if you have employed Bakta for genome annotations and followed this pipeline, you can upload the files named `samplename.embl`. We recommend following the suggestions made by the web developers.
+
+[^28]: Bertelli, C., Laird, M.R., Williams, K.P., Simon Fraser University Research Computing Group, Lau, B.Y., *et al.*, (2017) IslandViewer 4: expanded prediction of genomic islands for larger-scale datasets, Nucleic Acids Research, 45:W30–W35, https://doi.org/10.1093/nar/gkx343

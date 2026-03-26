@@ -1,0 +1,170 @@
+---
+title: "Genomics pipeline"
+subtitle: "Sequencing platform: Illumina and Oxford Nanopore"
+author: "Ana V. Lasa (ana.lasa@eez.csic.es)"
+  #- "José F. Cobo Díaz"
+format: 
+  html:
+    theme: united
+    lang: en
+    css: styles.css
+editor: visual
+crossref:
+  fig-prefix: "Figure"
+  tbl-prefix: "Table"
+---
+
+# 0. Introduction
+
+In this tutorial you will learn how to perform a hybrid assembly of bacterial genomes. Hybrid assembly is the best strategy for resolving genomes with repetitive regions in particular, because they are difficult to solve just with the short and long reads coming from Illumina and Oxford Nanopore platforms, respectively.
+
+Since this website covers all the steps needed to perform the processing of Illumina and Oxford Nanopore reads, we will just explain how to perform the hybrid assembly. Have a look at the sections [**Genomics Illumina**](Genomes_Illumina) and [**Genomics Nanopore**](Genomes_Nanopore) to know how to perform all the analyses prior to the hybrid assembly.
+
+## 0.1 Requirements
+
+This pipeline has been set up on a Linux server (Ubuntu distribution), with 96 cores and 500 MB of RAM memory. You have to be careful and change some parameters according to the computational power of your machine.
+
+Furthermore, here we assume that all the packages, programs, conda environments, and databases are already correctly installed. Otherwise, you must install or download all of them as the first step.
+
+Some knowledge of **bash** is also desirable.
+
+| Program   | Version |
+|-----------|---------|
+| Unicycler | v.0.5.1 |
+| Quast     | v.5.2.0 |
+| Checkm2   | v.1.1.0 |
+
+: Programs and their versions used in this pipeline
+
+## 0.2 Some useful tricks
+
+-Remember that if you want **to create or modify an script**, you can write in the terminal:
+
+`nano name_of_the_script.sh` (or whichever editor you use)
+
+This command will open the nano text-editor, where you can write or paste your script. There are some [keyboard shortcuts](https://www.nano-editor.org/dist/latest/cheatsheet.html "check the shortcuts") to manage the text editor.
+
+If the script is written in bash, then you have to write this in the terminal to execute the script:
+
+`bash name_of_the_script.sh`
+
+-Preferably work with **screens**. Some steps are very time-consuming, so it is necessary to run them on a screen. Hence, you can leave the server working when you go home to rest, or you can use the server to perform other analyses meanwhile. Working with screen is mandatory if you have internet connection problems.
+
+To create a screen, just run this command: `screen -S name_of_screen`. Once created, you can detach it and continue working on your server with this keyboard shortcut: `ctr + a (and then) d`
+
+## 0.3 Initial data
+
+To perform the hybrid assembly, we first had to filter the sequences—removing adapters, low-quality reads, and so on from both the raw reads obtained by Illumina and Nanopore.
+
+That is to say, we have to assembly the reads obtained after applying the tool **TrimGalore** or **fastp** (Illumina; see the section [**Genomics Illumina**](Genomes_Illumina), and those reads obtained after applying the software **Chopper** (Nanopore; see the section [**Genomes Nanopore**](Genomes_Nanopore)).
+
+# 1. Hybrid assembly
+
+We will assembly all of them by means of the [tool **Unicycler**](https://github.com/rrwick/unicycler?tab=readme-ov-file#installation "click to check the user guide")[^1]. This software shines when Illumina reads and long reads from the same isolte have to be assembled.
+
+[^1]: Wick, R.R., Judd, L.M., Gorrie, C.L., Holt, K.E. (2017) Unicycler: Resolving bacterial genome assemblies from short and long sequencing reads. PLOS Computational Biology 13: e1005595. https://doi.org/10.1371/journal.pcbi.1005595
+
+::: callout-important
+Be careful with the names of the reads, especially if the reads obtained from Illumina and Nanopore do not have the same name, as in this example.
+
+For illustrative purposes, in this tutorial we have used reads named “*sample_Illumina*” and “*sample_Nanopore*”. Yo will have to adapt the script according to your samples' name.
+:::
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+ILLUMINA_DIR="/home/ana/hybrid_assembly/03.trimgalore_results" #path to the Illumina reads, previously trimmed
+NANOPORE_DIR="/home/ana/hybrid_assembly/12.chopper_results" #path to the Nanopore reads, already trimmed
+
+OUTPUT_DIR="/home/ana/hybrid_assembly/14b.unicycler_results" #output directory
+
+THREADS=48 #adapt it according to your machine's power
+
+mkdir -p "$OUTPUT_DIR" #create the output directory
+
+echo "Looking for the samples in: $ILLUMINA_DIR..."
+
+shopt -s nullglob
+R1_FILES=("$ILLUMINA_DIR"/*_1_val_1.fq.gz) #adapt it according to the name of yur reads.
+
+if [ ${#R1_FILES[@]} -eq 0 ]; then
+    echo "Not *_1_val_1.fq.gz files found"
+    exit 1
+fi
+
+#Loop over all the files
+for r1 in "${R1_FILES[@]}"; do
+
+    r2=${r1/_1_val_1.fq.gz/_2_val_2.fq.gz}
+
+    illumina_name=$(basename "$r1" _1_val_1.fq.gz)#extract the name of the samples sequenced by Illumina
+
+    #remove the prefix "Illumina" (this is specific of this dataset, you can )
+    sample=${illumina_name%_Illumina}
+
+    nanopore_file="$NANOPORE_DIR/${sample}_Nanopore.fastq" #the same for Nanopore reads
+
+    echo "......Processing sample: $sample"
+
+    # Check whether F and R files are available
+    if [ ! -f "$r2" ]; then
+        echo "ERROR: R read is not found for sample: $sample"
+        continue
+    fi
+
+    if [ ! -f "$nanopore_file" ]; then
+        echo "WARNING: Nanopore reads for sample $sample are not found --> omitted."
+        continue
+    fi
+
+    #Run Unicycler:
+    unicycler \
+        -1 "$r1" \ #Illumina F reads
+        -2 "$r2" \ #Illumina R reads
+        -l "$nanopore_file" \ #Nanopore reads
+        -o "$OUTPUT_DIR/$sample" \ #name of the assembled reads
+        -t "$THREADS" \
+        --racon_path /home/ana/miniconda3/bin/racon #Unicycler calls Racon tool, so you have to write the path to Racon
+
+    # Validation
+    if [ -f "$OUTPUT_DIR/$sample/assembly.fasta" ]; then #change here according to the name of your files.
+        echo "Assembly finished for sample: $sample"
+    else
+        echo "The assembly failed for sample: $sample"
+    fi
+
+done
+
+echo "......Results saved in: $OUTPUT_DIR"
+```
+
+These lines create a directory for each sample analyzed. Inside this folder you can see these outputs (among others):
+
+\-`assembly.gfa`: this is the final assembly in GFA format.
+
+\-`assembly.fasta`: the same but in fasta format.
+
+\-`XXXX.spades_graph_kY.gfa`: where XXX is a number and Y indicates the k-mer size analyzed. Non-altered graphs obtained for each k-mer size.
+
+Now, we can work with the files `assembly.fasta`.
+
+# 2. Check the quality of the assemblies
+
+We have to check the quality of the assembled genomes, and we can do that in two different ways.
+
+## 2.a) QUAST software
+
+We can use a script written in Python to evaluate the quality of the assembly. Specifically, we can use the `quast.py` script, whose main usage is already described in [this website](https://quast.sourceforge.net/docs/manual.html#sec1 "click to see the manual")[^2].
+
+[^2]: Mikheenko, A., Saveliev, V., Hirsch, P., Gurevich, A., (2023) WebQUAST: online evaluation of genome assemblies, Nucleic Acids Research, 51:W601–W606, https://doi.org/10.1093/nar/gkad406
+
+You can run the script described in the **section 7.a)** of this [tutorial](Genomes_Nanopore). Remember that you have to adapt the script according to the paths of the current folder, the name of the files, the extension of the fasta files etc.
+
+## 2.b) CheckM2 software
+
+Software [**CheckM2**](https://github.com/chklovski/CheckM2 "click to see more details")[^3] is a machine learning-based tool that predicts the completeness and contamination of bacterial genomes or bins.
+
+[^3]: Chklovski, A., Parks, D.H., Woodcroft, B.J. *et al*., (2023) CheckM2: a rapid, scalable and accurate tool for assessing microbial genome quality using machine learning. Nat Methods 20, 1203–1212. https://doi.org/10.1038/s41592-023-01940-w
+
+You can run the script described in the **section 7.b)** of this [tutorial](Genomes_Nanopore). Remember that you have to adapt the script according to the paths of the current folder, the name of the files, the extension of the fasta files etc.

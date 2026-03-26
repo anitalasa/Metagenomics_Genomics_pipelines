@@ -1,0 +1,1001 @@
+---
+title: "Metagenomics pipeline"
+subtitle: "Sequencing platform: Illumina"
+author: "Ana V. Lasa (ana.lasa@eez.csic.es)"
+format: 
+  html:
+    theme: united
+    lang: en
+    css: styles.css
+editor: visual
+crossref:
+  fig-prefix: "Figure"
+  tbl-prefix: "Table"
+---
+
+# 0. Introduction
+
+In this tutorial you will learn how to perform metagenomics analyses. We will go through all the steps needed: from the processing of raw sequencing reads coming from the **Illumina platform** (Paired-End strategy), until the obtaining of quality metagenome-assembled genomes.
+
+## 0.1 Requirements
+
+This pipeline has been set up on a Linux server (Ubuntu distribution), with 96 cores and 500 MB of RAM memory. You have to be careful and change some parameters according to the computational power of your machine.
+
+Furthermore, here we assume that all the packages, programs, conda environments, and databases are already correctly installed. Otherwise, you must install or download all of them as the first step.
+
+Some knowledge of **bash** is also desirable.
+
+| Program     | Version    |
+|-------------|------------|
+| Trim Galore | v.0.6.10   |
+| Kraken2     | v.2.1.2    |
+| Seqtk       | v.1.4-r122 |
+| Bowtie2     | v.2.5.5    |
+| SAMtools    | v.1.31     |
+| metaSPAdes  | v.4.2.0    |
+| MEGAHIT     | v.1.2.9    |
+| MetaBAT2    | v.2.12.1   |
+| CheckM2     | v.1.1.0    |
+
+: Programs and their versions used in this pipeline
+
+## 0.2 Some useful tricks
+
+-Remember that if you want **to create or modify an script**, you can write in the terminal:
+
+`nano name_of_the_script.sh` (or whichever editor you use)
+
+This command will open the nano text-editor, where you can write or paste your script. There are some [keyboard shortcuts](https://www.nano-editor.org/dist/latest/cheatsheet.html "check the shortcuts") to manage the text editor.
+
+If the script is written in bash, then you have to write this in the terminal to execute the script:
+
+`bash name_of_the_script.sh`
+
+-Preferably work with **screens**. Some steps are very time-consuming, so it is necessary to run them on a screen. Hence, you can leave the server working when you go home to rest, or you can use the server to perform other analyses meanwhile. Working with screen is mandatory if you have internet connection problems.
+
+To create a screen, just run this command: `screen -S name_of_screen`. Once created, you can detach it and continue working on your server with this keyboard shortcut: `ctr + a (and then) d`
+
+# 1. Check the data
+
+First of all, you have to download the sequencing files given by the sequencing company and allocate them into your server (to create a new directory: `mkdir name_project`.
+
+::: callout-note
+From here onwards, we will assume that the name of the directory containing all the sub-directories and files regarding your sequencing project is called `name_project`, and that the raw reads are stored in the directory `00.raw_reads`. In this example, the name of the project directory is called *Metagenomas_prueba_illumina*, and the path to it is this: */home/ana/Metagenomas_prueba_illumina/*.
+:::
+
+We need to check if the sequencing company gave us fastq files zipped or unzipped, if there are two (or more) Forward and/or Reverse files per sample (F and R, respectively from here onwards), if F and R reads coming from the same sample have the same number of reads, etc. This step is essential, so take your time to check how the sequencing files look like. There are as many possibilities as there are sequencing companies, but cannot cover all the case studies.
+
+In this example, we have regular Illumina PE (Pair-Ending) data: just one F and R file per sample, and they are zipped (`.fastq.gz` extension) So, let's check if both files have information about the same number of raw reads:
+
+``` r
+zcat F_file.fastq.gz | wc -l 
+```
+
+This command will not give us the number of reads in each file, but the number of lines per file. Fastq files usually contain **4 lines** per read: the name of the read, the sequence itself, the quality line break, and the quality scores. So, you can know the number of reads in a fastq file by dividing the number of lines by 4. In this case, if we already get the same number of lines, it will be enough.
+
+::: callout-note
+What if F and R files coming from the same sample do not contain the same number of reads? In that case, it is highly recommended to join F and R into just one file in order not to lose raw reads. For that purpose, you can run this command:
+
+``` r
+zcat file1.zip file2.zip | gzip > file12.zip
+```
+:::
+
+If you have many samples, you can go to the directory where all the .fastq files are (`cd name_project`) and run a loop over all the files:
+
+``` r
+for f in *.fastq.gz; do #change the ending pattern of the names of the files if necessary
+echo -e "$f\t$(zgrep -c "^@" "$f")"
+done
+```
+
+Now, we need to create a .txt file with the names of all the samples, which will help us to create loops to iterate around all the files. If you are not in the directory where all the .fastq files are, go there and run:
+
+``` r
+ls 00.raw_reads > list.txt
+```
+
+`list.txt` has to look like this:
+
+``` r
+SRR25393882_Industry_F01_-_Non_food_contact_-_Cold_1.fastq.gz
+SRR25393882_Industry_F01_-_Non_food_contact_-_Cold_2.fastq.gz
+SRR25393885_Industry_C08_-_Non_food_contact_-_Cold_1.fastq.gz
+SRR25393885_Industry_C08_-_Non_food_contact_-_Cold_2.fastq.gz
+SRR25393889_Industry_C07_-_Non_food_contact_-_Cold_1.fastq.gz
+SRR25393889_Industry_C07_-_Non_food_contact_-_Cold_2.fastq.gz
+SRR25393893_Industry_C06_-_Non_food_contact_-_Cold_1.fastq.gz
+SRR25393893_Industry_C06_-_Non_food_contact_-_Cold_2.fastq.gz
+```
+
+# 2. Trimming of the raw reads
+
+In this step, we are going to remove the Illumina adapters, all short reads, reads with ambiguities, etc., by means of the [tool](https://github.com/FelixKrueger/TrimGalore "Go to the user guide") **Trim Galore**[^1]. The Perl script of Trim Galore (`trim_galore`) must be stored in the working directory, namely `name_proyect` (*Metagenomas_prueba_illumina* in this example).
+
+[^1]: https://www.bioinformatics.babraham.ac.uk/projects/trim_galore/
+
+``` r
+#!/bin/bash
+set -euo pipefail
+
+INPUT_DIR="/home/ana/Metagenomas_prueba_illumina/00.raw_reads" #change the path to your input path 
+OUTPUT_DIR="/home/ana/Metagenomas_prueba_illumina/01.trimmed_reads_trimgalore" #define the path where you want to store the ouput files
+
+mkdir -p "$OUTPUT_DIR" #creates the output directory, even if it is already created
+
+for F1 in "$INPUT_DIR"/*_1.fastq.gz; do #adapt this line to the ending pattern of your files' name
+    BASE=$(basename "$F1" _1.fastq.gz)
+    F2="$INPUT_DIR/${BASE}_2.fastq.gz"
+
+#check wether F and R of the same sample are in the directory    
+if [[ ! -f "$F2" ]]; then echo "ERROR: missing pair for $BASE"
+continue
+fi
+
+echo "..... running trim_galore on sample $BASE"
+
+#remember that trim_galore is a Perl script, so you have to indicate it before invoking it:
+
+perl trim_galore --paired \ #pair-end option
+--nextera \ #the type of adapters to look for. Change it according to the type of adapters you used in the sequencing 
+--stringency 5 \ #minimum overlapping size between the adapters and the raw reads
+--length 75 \ #remove all reads shorter than 75 bp. Adapt it according to your needs
+--quality 20 \ #minimun phred score
+--max_n 2 \ #maximum ambiguities
+--trim-n \ #removes Ns from either side of the read
+--gzip \
+--no_report_file \
+--suppress_warn \
+--output_dir "$OUTPUT_DIR" \
+"$F1" "$F2"
+
+done
+```
+
+At the time of writing this pipeline, the multithreading option for Trim Galore was not available.
+
+::: callout-warning
+This step is time-consuming; take it in mind, and do not forget to create a screen.
+:::
+
+In our example, Trim Galore created these files (have a look at the ending pattern of the files' names, namely `1_val_1.fq.gz` and `2_val_2.fg.gz` for F and R reads, respectively). Keep the ending pattern of your files' names in mind, you will need to remember them further.
+
+``` r
+SRR25393882_Industry_F01_-_Non_food_contact_-_Cold_1_val_1.fq.gz  SRR25393889_Industry_C07_-_Non_food_contact_-_Cold_1_val_1.fq.gz
+SRR25393882_Industry_F01_-_Non_food_contact_-_Cold_2_val_2.fq.gz  SRR25393889_Industry_C07_-_Non_food_contact_-_Cold_2_val_2.fq.gz
+SRR25393885_Industry_C08_-_Non_food_contact_-_Cold_1_val_1.fq.gz  SRR25393893_Industry_C06_-_Non_food_contact_-_Cold_1_val_1.fq.gz
+SRR25393885_Industry_C08_-_Non_food_contact_-_Cold_2_val_2.fq.gz  SRR25393893_Industry_C06_-_Non_food_contact_-_Cold_2_val_2.fq.gz
+```
+
+# 3. Remove reads coming from the host(s)
+
+It is important to remove reads coming from the potential host(s) in metagenomics analyses. For instance, we have to remove reads from the pig, cow and human if we are working with samples taken from a slaughterhouse. If you are working with plant metagenomes, you should remove the plant host's genome. Moreover, we will also remove the reference genome of the phage phiX174, usually included in Illumina projects [^2].
+
+[^2]: Fernández-González, A.J., Lasa, A.V., Fernández-López, M. (2018) Whole-genome sequences of two Arthrobacter strains isolated from a holm oak rhizosphere affected by wildfire. Genome Announc 6:e00071-18. https://doi.org/10.1128/genomeA.00071-18
+
+With this removal we are closer than ever to guaranteeing that we will retrieve just non-host reads. Therefore, we will reduce the noise (and file size) in our analyses, focusing mostly on microbial reads.
+
+We can follow two different strategies to get rid of the host(s) genome. **a)** Assign taxonomy to the reads and then retrieve just those reads that come from prokaryotes, and **b)** Remove the genome of the host(s) directly.
+
+## 3.a) Assign taxonomy + extract prokaryotic reads:
+
+We will use the tool [**Kraken2**](https://github.com/DerrickWood/kraken2/wiki "click to check the user guide")[^3] to assign the taxonomy. So, first, we have to download the database from [Kraken2's web](https://benlangmead.github.io/aws-indexes/k2 "click to download") that best suits our type of data, and our objectives. In this example, we will download the database PlusPF, which includes the standard one plus data from protozoa and fungi.
+
+[^3]: Wood, D.E., Lu, J., Langmead, B. (2019) Improved metagenomic analysis with Kraken 2. Genome Biol. 20:1–13. https://doi.org/10.1186/s13059-019-1891-0
+
+Remember that you can download the database in your server straightaway by using the command `wget + URL`. If the database is in `.tar.gz`format, after the downloading you have to open the file by `tar -xzvf database.tar.gz`. This step takes quite a long time, so be patient. After that, it will create a new directory that contains many different files.
+
+Once the preparation of Kraken2's database is ready, run these commands:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+READS_DIR="/home/ana/Metagenomas_prueba_illumina/01.trimmed_reads_trimgalore" #directory with reads trimmed by trimgalore
+OUT_DIR="/home/ana/Metagenomas_prueba_illumina/02a.taxonomia_kraken" #path to the output directory
+KRAKEN_DB="/home/ana/MinION_PineRoots/kraken2/" #path to Kraken2's database (in this example it was already stored in a different project)
+
+THREADS=48 #adapt to your machine
+R1_SUFFIX="_1_val_1.fq.gz" #change according to the ending pattern of your files' name (those obtained by trimgalore)
+R2_SUFFIX="_2_val_2.fq.gz" 
+
+source "$(conda info --base)/etc/profile.d/conda.sh"
+CONDA_ENV="nanopore" #indicate the name of the conda environment where Kraken2 is loaded
+conda activate "${CONDA_ENV}" #these lines find and activate the specific
+
+mkdir -p "${OUT_DIR}" #creates the output directory
+
+for R1 in ${READS_DIR}/*${R1_SUFFIX}; do    
+    SAMPLE=$(basename "${R1}" ${R1_SUFFIX}) #extract sample names   
+    R2="${READS_DIR}/${SAMPLE}${R2_SUFFIX}" #same for the corresponding R files
+    
+    # check whether the corresponding R files exist
+    if [[ ! -f "${R2}" ]]; then
+        echo "No reverse match found for ${SAMPLE}. Omitted."
+        continue
+    fi
+    echo "Running Kraken2 for sample ${SAMPLE}"
+    
+    kraken2 \
+        --paired \ #for paired-end projects
+        --db "${KRAKEN_DB}" \ #indicates the path of the database automatically
+        --threads "${THREADS}" \
+        --report "${OUT_DIR}/${SAMPLE}_report.txt" \
+        --output "${OUT_DIR}/${SAMPLE}_kraken2.out" \
+        "${R1}" "${R2}"
+done
+echo "Kraken2 finished for all samples."
+```
+
+This script will create `.out` and `.report.txt` files for each sampling, containing the taxonomy of all the trimmed reads and a summary report, respectively. Now, it is time to extract just the reads of interest: those corresponding to Bacteria and Archaea (in this example). For that end, we have to run the following script. It includes a step in which the prokaryotic reads will be extracted according to their ID in the `.out` file. We will use the useful [tool **Seqtk**](https://github.com/lh3/seqtk "Go to the user manual").
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONDA_ENV="nanopore" #write the name of the environment where seqtk is loaded
+READS_DIR="/home/ana/Metagenomas_prueba_illumina/01.trimmed_reads_trimgalore" #path to trimmed reads
+KRAKEN_OUT_DIR="/home/ana/Metagenomas_prueba_illumina/02a.taxonomia_kraken" #path to kraken2's ouputs
+PROK_DIR="/home/ana/Metagenomas_prueba_illumina/02ab.prokaryotes_kraken" #output directory
+
+R1_SUFFIX="_1_val_1.fq.gz" #be careful and check the ending pattern of the names of the trimmed reads. Change accordingly
+R2_SUFFIX="_2_val_2.fq.gz"
+
+mkdir -p "${PROK_DIR}"
+
+#activate the specific environment
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "${CONDA_ENV}" 
+
+find "${READS_DIR}" -name "*${R1_SUFFIX}" -print0 | while IFS= read -r -d '' R1; do
+SAMPLE=$(basename "${R1}" "${R1_SUFFIX}")
+R2="${READS_DIR}/${SAMPLE}${R2_SUFFIX}"
+KRAKEN_OUT="${KRAKEN_OUT_DIR}/${SAMPLE}_kraken2.out"
+
+#check whether R reads are available
+if [[ ! -f "${R2}" ]]; then
+echo "R2 was not found for ${SAMPLE}, Omitted."
+continue
+fi
+
+#check wether the .out file (output of kraken2) is available
+if [[ ! -f "${KRAKEN_OUT}" ]]; then
+echo "The file .out from Kraken2 is missing for ${SAMPLE}, Omitted."
+continue
+fi 
+
+echo "Processing sample: ${SAMPLE}"
+
+# Extract all the tax ID from the .out file. Here we just consider ID different from 0 (unclassified)
+awk '$3!=0 {print $3}' "${KRAKEN_OUT}" | sort -u > "${PROK_DIR}/${SAMPLE}_taxids.txt"
+
+# Extract IDs from the corresponding reads
+awk 'NR==FNR {tax[$1]; next} $3 in tax {print $2}' \
+"${PROK_DIR}/${SAMPLE}_taxids.txt" "${KRAKEN_OUT}" > "${PROK_DIR}/${SAMPLE}_reads.txt"
+
+# Now, extract fastq files by using seqtk
+seqtk subseq "${R1}" "${PROK_DIR}/${SAMPLE}_reads.txt" > "${PROK_DIR}/${SAMPLE}_prok_R1.fq"
+seqtk subseq "${R2}" "${PROK_DIR}/${SAMPLE}_reads.txt" > "${PROK_DIR}/${SAMPLE}_prok_R2.fq"
+echo "fastq files already extracted for ${SAMPLE}. Results are stored in ${PROK_DIR}/"
+
+done
+
+echo "All samples were processed. End."
+```
+
+The reads are now prepared for assembly into contigs using either **metaSPAdes** or **megahit**. You can proceed directly to step [4. Contig assembly] to continue with the process.
+
+## 3.b) Remove the genome of the host(s)
+
+### 3.b 1 Download the reference genome(s) of the host(s)
+
+First, we have to download the fasta files of the genomes of interest. We will go to [NCBI Genome web](https://www.ncbi.nlm.nih.gov/datasets/genome/ "search") and search for organism(s) of interest ("*Sus crofa*", in our example). From the list of available genomes, select the desired one (it's recommended to choose the reference genome). Locate the URL of the fasta file (in this case, the one with the extension `fna.gz`), and copy its download URL.
+
+Download the file to your preferred location (for instance, in `name_project`location). Go to that directory (`cd path_to_directory`) and:
+
+``` r
+wget https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/000/003/025/GCA_000003025.7_T2T-Sscrofa/GCA_000003025.7_T2T-Sscrofa_genomic.fna.gz)
+```
+
+Genome fasta file usually are compressed, so decompress it/them. If the only \``.fna.gz` file is the one you just downloaded:
+
+``` r
+gunzip *fna.gz #Just if the only .fna.gz file is the one you just downloaded
+```
+
+If there are other `.fna.gz`, you have to indicate the name of the file of interest:
+
+``` r
+gunzip name_of_the_compressed_fasta_file   
+```
+
+If there are more than one potential host, you should join all fasta files into just one:
+
+``` r
+cat host_genome1.fna \
+host_genome2.fna \
+host_genomeN.fna > host_combined.fna #the name of the joined-fasta files
+rm *.genomic.fna #remove individual fasta files to save disk space
+```
+
+### 3.b.2 Remove reads coming from the host(s)
+
+For that purpose, we will use [**Bowtie2** tool](https://www.metagenomics.wiki/tools/bowtie2 "go to user guide")[^4].
+
+[^4]: Langmead, B., Wilks, C., Antonescu, V., Charles, R. (2019) Scaling read aligners to hundreds of threads on general-purpose processors. Bioinformatics. 35:421–32. https://doi.org/10.1093/bioinformatics/bty648
+
+#### 3.b.2.1 Create the Bowtie2 index
+
+Bowtie2 is an aligner that needs to work with a special index database (see the corresponding manual), obtained from the genome(s) we want to compare with. So, let's create it:
+
+``` r
+bowtie2-build --large-index  \ #this option is the more suitable for large genome
+--threads 48 \ #it is recommended to use several cores to save time
+host_combined.fna \ #the joined-fasta file from which the index database will be obtained
+host_combined_index #indicate the name you want for the index database
+```
+
+As a result, several files with the prefix `host_combinex_index` are created. Write down this prefix, since we are going to use it in the next script.
+
+::: callout-warning
+This process takes a long time, so bear that in mind. Do not forget to run the script in a screen.
+:::
+
+#### 3.b.2.2 Run Bowtie2
+
+Now, we are able to run Bowtie2 over all the samples included in the directory `01.trimmed_reads_trimgalore` (the directory where the trimmed reads obtenained by Trim Galore are stored). Bowtie2 generates SAM files, which we will have to convert to BAM files with the [tool **SAMtools**](https://www.htslib.org/ "go to the user guide")[^5]. After that, we will have to extract those reads that do not map with host(s) genome, since they are non-host reads. The [tool](https://bedtools.readthedocs.io/en/latest/ "click for more information") **bedtools**[^6] has to be also installed on your server, since we will use it to extract fastq files from BAM files. All these steps are joined into one script:
+
+[^5]: Danecek, P, Bonfield, J.K., Liddle, J., Marshall, J., Ohan, V., *et al*., (2021) Twelve years of SAMtools and BCFtools, GigaScience, 10:giab008, https://doi.org/10.1093/gigascience/giab008
+
+[^6]: Quinlan, A.R., Hall, I.M., (2010) BEDTools: a flexible suite of utilities for comparing genomic features, Bioinformatics, 26:841–842, https://doi.org/10.1093/bioinformatics/btq033
+
+``` r
+#!/bin/bash
+set -euo pipefail
+
+THREADS=80 #multithreading is highly recommended
+INPUT_DIR="/home/ana/Metagenomas_prueba_illumina/01.trimmed_reads_trimgalore" #trimmed reads
+OUTPUT_SAM_DIR="/home/ana/Metagenomas_prueba_illumina/02b.sam_host" #directory where host reads will be stored (SAM format)
+OUTPUT_FASTQ_DIR="/home/ana/Metagenomas_prueba_illumina/02c.bowtie_nohost_fastq" #path to the ouput files
+BOWTIE_INDEX="/home/ana/Metagenomas_prueba_illumina/bowtie_index/host_combined_index" #path where bowtie2 index database is saved. Indicate it accordingly. We just indicate the prefix
+
+mkdir -p "$OUTPUT_SAM_DIR" #create the directory
+mkdir -p "$OUTPUT_FASTQ_DIR"
+
+# Loop over trimmed-reads files
+for F1 in "$INPUT_DIR"/*_1_val_1.fq.gz; do #Be careful with the ending pattern of the files'names. Change it according to your files' names
+
+    # Extract the prefix of the samples
+    BASE=$(basename "$F1" "_1_val_1.fq.gz")
+    F2="$INPUT_DIR/${BASE}_2_val_2.fq.gz"
+
+    # Check that the R file exists
+    if [[ ! -f "$F2" ]]; then
+        echo "ERROR: missing pair for $BASE"
+        continue
+    fi
+    echo ">>> Cleaning host reads for sample $BASE"
+
+    # Align against the host(s)
+    bowtie2 -p $THREADS --sensitive-local \
+        -x "$BOWTIE_INDEX" \
+        -1 "$F1" -2 "$F2" \ #-1 and -2 for F and R files, respectively
+        -S "$OUTPUT_SAM_DIR/${BASE}.sam"
+
+    #  Convert SAM to BAM
+    samtools view --threads $THREADS -bS "$OUTPUT_SAM_DIR/${BASE}.sam" > "$OUTPUT_SAM_DIR/${BASE}.bam"
+    rm "$OUTPUT_SAM_DIR/${BASE}.sam" #remove to save disk space
+
+    #  Extract pairs of non-matching reads. These are the reads we are interested in
+    #visit samtool's manual to understand the meaning of all the flags
+    samtools view -b -f 12 -F 256 "$OUTPUT_SAM_DIR/${BASE}.bam" > "$OUTPUT_SAM_DIR/ext_${BASE}.bam"
+    rm "$OUTPUT_SAM_DIR/${BASE}.bam" 
+
+    # Sort by name
+    samtools sort -n "$OUTPUT_SAM_DIR/ext_${BASE}.bam" > "$OUTPUT_SAM_DIR/sort_${BASE}.bam"
+    rm "$OUTPUT_SAM_DIR/ext_${BASE}.bam"
+
+    # Extract non-matching reads to fastq files
+    #visit bedtools's manual to understand the meaning of all the flags
+    bedtools bamtofastq \
+        -i "$OUTPUT_SAM_DIR/sort_${BASE}.bam" \
+        -fq "$OUTPUT_FASTQ_DIR/${BASE}_nohost_R1.fastq" \
+        -fq2 "$OUTPUT_FASTQ_DIR/${BASE}_nohost_R2.fastq"
+
+    echo ">>> Done sample $BASE"
+
+done
+```
+
+# 4. Contig assembly
+
+Regardless of the strategy followed to remove the host(s) sequences, the next step is to assembly the quality sequences into contigs. Again, here we have several options, and the choice will depend on your requirements. If you have just a few samples or if they are not very complex, you can use the [tool **metaSPAdes**](https://ablab.github.io/spades/index.html "go to the user guide")[^7]. But if you have many samples or they are supposed to be very complex, maybe you prefer [**MEGAHIT**](https://github.com/voutcn/megahit/ "go to the main web")[^8], a powerful tool less time-demanding.
+
+[^7]: Nurk, S., Meleshko, D., Korobeynikov, A., Pevzner, P.A. (2017) MetaSPAdes: a new versatile metagenomic assembler. Genome Res.27:824–834. https://doi.org/10.1101/gr.213959.116
+
+[^8]: Li,D., Liu, C.M., Luo, R., Sadakane, K., Lam, K.W. (2015) MEGAHIT: an ultra-fast single-node solution for large and complex metagenomics assembly via succinct de Bruijn graph, Bioinformatics, 31:1674–1676, https://doi.org/10.1093/bioinformatics/btv033
+
+::: callout-note
+From here on, we will follow the steps as if we had removed the host genome with the Bowtie2 tool, in order not to lengthen the pipeline. If you have used Kraken2 for taxonomic assignment and have removed non-prokaryotic sequences, you can continue with this protocol as well. In that case, remember to adapt the names of the input files and their extension.
+:::
+
+## 4.a. Assembly with metaSPAdes
+
+**metaSPAdes**[^9] is a good aligner that assemblies the sequences into contigs (even in scaffolds). It is a python script. F and R reads do not need to be overlapped, metaSPAdes will do that during the assembly process. Run these lines of code to loop over all the non-host quality reads:
+
+[^9]: Nurk, S., Meleshko, D., Korobeynikov, A., Pevzner, P.A. (2017) MetaSPAdes: a new versatile metagenomic assembler. Genome Res.27:824–834. https://doi.org/10.1101/gr.213959.116
+
+::: callout-warning
+The assembly is a really time-consuming step, so remember to run it into a new screen.
+:::
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+METASPADES="/home/ana/miniconda3/bin/metaspades.py" #indicate the path of the already downloaded metasSPAdes script
+READS_DIR="/home/ana/Metagenomas_prueba_illumina/02c.bowtie_nohost_fastq" #path to non-host files obtained by Bowtie2. If you have removed the non-prokaryotic reads after using Kraken2, indicate the path of the corresponding output directory
+METASPADES_DIR="/home/ana/Metagenomas_prueba_illumina/03.metaSPAdes_results" #ouput directory
+CONTIGS_DIR="/home/ana/Metagenomas_prueba_illumina/04.contigs_metaSPAdes" #path where assembled contig will be stored
+
+THREADS=64 #set according to your server
+MEMORY=250 #set according to your server's RAM memory
+MIN_READS=1000 #minimum sequence number to be assembled. If your files contain less sequences, the assembly will not be performed. You can change or skip this parameter, but adapt the lines below accordingly
+
+R1_SUFFIX="_nohost_R1.fastq" #adapt to the ending pattern of the names of the non-host files.
+R2_SUFFIX="_nohost_R2.fastq"
+
+mkdir -p "${METASPADES_DIR}"
+mkdir -p "${CONTIGS_DIR}"
+
+find "${READS_DIR}" -name "*${R1_SUFFIX}" -print0 | while IFS= read -r -d '' R1; do
+
+    SAMPLE=$(basename "${R1}" "${R1_SUFFIX}")
+    R2="${READS_DIR}/${SAMPLE}${R2_SUFFIX}"
+    SAMPLE_OUT="${METASPADES_DIR}/${SAMPLE}"
+
+    #Check whether de R files of the corresponding F files are available
+    if [[ ! -f "${R2}" ]]; then
+        echo "The R2 of ${SAMPLE} was not found, Ommited."
+        continue
+    fi
+
+    R1_COUNT=$(($(wc -l < "${R1}") / 4)) #count the number of F sequences
+    R2_COUNT=$(($(wc -l < "${R2}") / 4)) #count the number of R sequences
+
+    if [[ ${R1_COUNT} -lt ${MIN_READS} ]] || [[ ${R2_COUNT} -lt ${MIN_READS} ]]; then
+        echo "Very few reads in ${SAMPLE} (R1=${R1_COUNT}, R2=${R2_COUNT}), Ommited."
+        continue
+    fi #do not assembly if there are not enough reads
+
+    echo "============================="
+    echo "RUNNING metaSPAdes on ${SAMPLE}"
+    echo "============================="
+
+    "${METASPADES}" \ #call the metaSPAdes script
+        -1 "${R1}" \ #F reads
+        -2 "${R2}" \ #R 
+        -o "${SAMPLE_OUT}" \
+        --threads "${THREADS}" \
+        --memory "${MEMORY}" \
+        --phred-offset 33 #PHRED quality offset for the input reads. In some cases, there is not need to specify this flag
+        
+    #copy the fasta of the already assembled contigs to another directory: it will make easier futher work
+    if [[ -s "${SAMPLE_OUT}/contigs.fasta" ]]; then
+        cp "${SAMPLE_OUT}/contigs.fasta" \ 
+           "${CONTIGS_DIR}/contigs_${SAMPLE}.fna"
+        echo "Contigs copied correctly"
+    else
+        echo "WARNING: No contigs were assembled for ${SAMPLE}"
+    fi
+
+    rm -rf "${SAMPLE_OUT}/corrected/" #remove additional files to save disk-space
+    rm -rf "${SAMPLE_OUT}/tmp/"
+    rm -rf "${SAMPLE_OUT}/K"* 
+    rm -rf "${SAMPLE_OUT}/misc/"
+done
+
+echo "ALL metaSPAdes analysis finished"
+```
+
+This script generates two directories: `03.metaSPAdes_bowtie` and `04b.contigs_bowtie`. The first one is very informative, but the second one contains all the necessary fasta files for the next step. They are the fasta files of all the assembled contigs.
+
+If you have a look at the fasta file (`head -n 3 /home/ana/Metagenomas_prueba_illumina/04b.contigs_bowtie/selec_a_fasta_file.fna`) you will find something similar to:
+
+``` r
+>NODE_1_length_87819_cov_21.227793
+ATGAACTTATTGTATGGTACCCTTAGTTTAACATAATATACATTATGCGAAAACAAACCA
+GCGCTGATTGAGCGCGGCCAAAACAACATATTACACAGTGCTGTGATGAATCTTGCTAAT
+```
+
+This structure is very informative:
+
+\-`>NODE_X`, where *NODE* is synonymous of 'Contig', and *X* corresponds to the number of the contig.
+
+\-`length_YYYY`, indicating the length of the contig, in bp.
+
+\-`cov_ZZZZ`, which shows the coverage of the longest contig.
+
+::: callout-note
+Probably, you will find contigs whose size is even smaller than 75 bp, and remember that we trimmed the shortest reads with Trim Galore (you can check it as follows: `tail -40 /home/ana/Metagenomas_prueba_illumina/04b.contigs_bowtie/selec_a_fasta_file.fna`). This result is due to the algorithm of metaSPAdes, but do not pannic. Then, we will filter out the shortest contigs. So, this will not be a problem eventually.
+:::
+
+## 4.b. Assembly with megahit
+
+metaSPAdes can take a lot of time to do the assemblies, so the **MEGAHIT** can be used as an alternative. This program is also really efficient, but less time-consuming. You just need to run these commands:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+READS_DIR="/home/ana/Metagenomas_prueba_illumina/02c.bowtie_nohost_fastq" #path to the directory where the non-host files are stored
+OUTPUT_DIR="/home/ana/Metagenomas_prueba_illumina/03b.megahit_results"
+THREADS=64
+
+R1_SUFFIX="_nohost_R1.fastq" #adapt to the specific ending patter of the names of non-host files
+R2_SUFFIX="_nohost_R2.fastq"
+
+mkdir -p "${OUTPUT_DIR}"
+
+echo "======================================="
+echo "Starting MEGAHIT assembly pipeline"
+echo "======================================="
+for R1 in "${READS_DIR}"/*"${R1_SUFFIX}"; do
+
+    # Extract the name of each sample
+    BASENAME=$(basename "${R1}" "${R1_SUFFIX}")
+    R2="${READS_DIR}/${BASENAME}${R2_SUFFIX}"
+    SAMPLE_OUT="${OUTPUT_DIR}/${BASENAME}"
+    
+    # Check whether F and R files match each oter for each sample
+    if [[ ! -f "${R2}" ]]; then 
+        echo "R2 not found for ${BASENAME}, skipping..."
+        continue
+    fi
+    echo "---------------------------------------"
+    echo "RUNNING MEGAHIT on sample ${BASENAME}"
+    echo "---------------------------------------"
+    megahit -1 "${R1}" -2 "${R2}" -o "${SAMPLE_OUT}" -t "${THREADS}"
+    #-1: F reads
+    #-2: R reads
+    
+    echo "......MEGAHIT on sample ${BASENAME} finished"
+    
+done
+echo "======================================="
+echo "ALL MEGAHIT ASSEMBLIES FINISHED !!!"
+echo "Results in: ${OUTPUT_DIR}"
+echo "======================================="
+```
+
+This script creates a directory for each sample, in which several files are stored. Ìnside it, we can find the directory `intermediate_contigs`, and the files `checkpoint.txt`, `done`, `log`, `options.json` and `final.contigs.fa`. The latter is the fasta file containing all the contigs assembled for each sample. The name of the contigs looks like:
+
+`>k141_56891 flag=1 multi=2.0000 len=365`, where `flag` represents de connectivity of the contig in the corresponding graph, while the tag `multi`indicates the average coverage of the *k*-mers.
+
+For more details about the outputs and parameters deployed by MEGAHIT, please visit the [software's webpage](https://github.com/voutcn/megahit/ "click to the user guide").
+
+# 5. Filtering of the contigs
+
+Now it is time to get rid of the shortest contigs, since not all of them are informative. In this example, we have decided to remove all the contigs shorter than 1 kb, although the cut-off can be changed. Indeed, in furhter steps we are going to work with just those quality contigs longer than 1.5 kb.
+
+::: callout-note
+Remember the differences between the name of the contigs given by metaSPAdes and MEGAHIT:
+
+\-**metaSPAdes contigs'name**: `>NODE_1_length_87819_cov_21.227793`
+
+\-**megahit contigs' name**: `>k141_56891 flag=1 multi=2.0000 len=365`
+:::
+
+The following script is able to deal with contigs obtained from both metaSPAdes and megahit assemblers. Here, we just how to apply it to the results from metaSPAdes in order to shorten the pipeline:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+ASSEMBLY_DIR="/home/ana/Metagenomas_prueba_illumina/03.metaSPAdes_results" #directory with all the assembled contigs
+OUTPUT_DIR="/home/ana/Metagenomas_prueba_illumina/05.filtered_contigs" #path to the ouput directory
+
+MIN_LENGTH=1000 #indicate the minimum length of the contigs 
+
+mkdir -p "${OUTPUT_DIR}"
+for sample_path in "${ASSEMBLY_DIR}"/*/; do
+    sample=$(basename "${sample_path}")
+    echo "... filtering ${sample}"
+    output_file="${OUTPUT_DIR}/${sample}_min${MIN_LENGTH}.fna" #files containing the filtered contigs will be named as SAMPLE_min1000.fna
+    
+    #Detect the algorithm used to perform the assembly:
+        if [[ -f "${sample_path}/contigs.fasta" ]]; then #Be careful! Files obtained by metaSPAdes are named as "contig.fasta". You have to check it in your files
+        # metaSPAdes
+        input_fasta="${sample_path}/contigs.fasta" 
+        
+        #extract the length of each contig from their name (remember the structure of the names)
+        awk -v min_len="${MIN_LENGTH}" -v prefix="${sample}" '
+        /^>/ {
+            write_seq=0
+            if (match($0, /^>(NODE.*_length_([0-9]+))_cov/, arr)) {
+                name=arr[1]
+                len=arr[2]
+                if (len > min_len) {
+                    print ">" prefix "_" name
+                    write_seq=1
+                }
+            }
+            next
+        }
+        {
+            if (write_seq) print
+        }
+        ' "${input_fasta}" > "${output_file}"
+        
+    elif [[ -f "${sample_path}/final.contigs.fa" ]]; then #Be careful. Files cointaining the contigs obtained by megahit are named "final.contigs.fa". Verify it for your samples
+        # MEGAHIT
+        input_fasta="${sample_path}/final.contigs.fa"
+        
+        #extract the length of the contigs from the their names. Remember the specific structure of the names
+        awk -v min_len="${MIN_LENGTH}" -v prefix="${sample}" '
+        /^>/ {
+            write_seq=0
+            if (match($0, /^>([^[:space:]]+)[[:space:]].*(len=([0-9]+))/, arr)) {
+                id=arr[1]
+                len=arr[3]
+                if (len > min_len) {
+                    length_field=arr[2]
+                    gsub("len=", "length_", length_field)
+                    print ">" prefix "_" id "_" length_field
+                    write_seq=1
+                }
+            }
+            next
+        }
+        {
+            if (write_seq) print
+        }
+        ' "${input_fasta}" > "${output_file}"
+    else
+        echo "WARNING: No recognized contig file found in ${sample_path}"
+        continue
+    fi
+done
+
+#Count the number of contigs passing out the filtering step
+output_count_file="${OUTPUT_DIR}/number_contigs_${MIN_LENGTH}bp.txt"
+if compgen -G "${OUTPUT_DIR}/*.fna" > /dev/null; then
+    grep -c "^>" "${OUTPUT_DIR}"/*.fna | \
+    sed 's#.*/##' | \
+    sed 's/.fna:/\t/' > "${output_count_file}"
+else
+    echo "No filtered contig files found."
+fi
+```
+
+As a result, here we obtain files whose name's ending pattern looks like `.min1000.fna`. We also obtain a table named `number_contigs_min1000.txt`, which shows the number of contigs that are longer than 1000 bp, per sample.
+
+# 6. Alignment of the reads against contigs
+
+We will align trimmed read (those obtained after Trim Galore) against the assembled contigs we have just obtained. As a result, in future analyses we will be able to calculate the depth of the contigs. Now, this step resembles the genome *polishing* step.
+
+To do so, we will use again the tool **Bowtie2**. Remember that first of all we need to create a **Bowtie2-index database** (have a look at the **section 3.b.2.1** for more details). Then, we can run Bowtie2. The following script includes both steps.
+
+::: callout-note
+We are going to use both **Bowtie2** and **SAMtools** programs. In our case, they are in the basic environment, but if you have them loaded on (a) specific(s) conda environment(s), you will have to activate it (them) previously.
+:::
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONTIGS_DIR="/home/ana/Metagenomas_prueba_illumina/05.filtered_contigs" #path to the filtered assembled contigs
+READS_DIR="/home/ana/Metagenomas_prueba_illumina/01.trimmed_reads_trimgalore" #path to quality reads obtained by Trim Galore
+SAM_DIR="/home/ana/Metagenomas_prueba_illumina/06.bowtie_contigs_reads" 
+THREADS=64
+
+mkdir -p "${SAM_DIR}"
+
+echo "======================================="
+echo "Starting Bowtie2 polishing pipeline"
+echo "======================================="
+
+for CONTIG_FILE in "${CONTIGS_DIR}"/contigs_*_min1000.fna; do #be careful with the ending pattern of the contig files' names. Change it according to the patterns of your files
+    FILE_NAME=$(basename "${CONTIG_FILE}" .fna) #change according to the extension of your files
+    
+    # Extract the name of the samples
+    SAMPLE=${FILE_NAME#contigs_}
+    SAMPLE=${SAMPLE%_min1000}
+    
+    # Establish de ending pattern of the names of reads
+    R1="${READS_DIR}/${SAMPLE}_1_val_1.fq.gz" #Be careful; adapt it to the extension of your trimmed reads
+    R2="${READS_DIR}/${SAMPLE}_2_val_2.fq.gz"
+    
+    INDEX_PREFIX="${CONTIGS_DIR}/${FILE_NAME}_index" #prefix of the Bowtie2's index database
+    SAM_FILE="${SAM_DIR}/${SAMPLE}.sam"
+    BAM_FILE="${SAM_DIR}/${SAMPLE}.bam"
+   
+    # Check the correlation between F and R files
+    if [[ ! -f "${R1}" ]] || [[ ! -f "${R2}" ]]; then
+        echo "Reads not found for ${SAMPLE}, skipping..."
+        continue
+    fi
+    echo "---------------------------------------"
+    echo "Processing sample: ${SAMPLE}"
+    echo "---------------------------------------"
+    echo "... Running bowtie2-build"
+    
+    # Build the bowtie-index database from your reads
+    bowtie2-build --threads "${THREADS}" \ 
+        "${CONTIG_FILE}" \
+        "${INDEX_PREFIX}"
+        
+    echo "... Running bowtie2 alignment"
+    
+    # Run the alignment between the reads and the contigs
+    bowtie2 -p "${THREADS}" \
+        --no-unal \ #to not save the SAM intermediate files
+        --very-sensitive-local \
+        -x "${INDEX_PREFIX}" \ #the prefix of the indices
+        -1 "${R1}" \ #F reads
+        -2 "${R2}" \ #R reads
+        -S "${SAM_FILE}"
+   
+    # Now obtained SAM files are converted to BAM (using samtools)
+    echo "... Converting SAM to sorted BAM"
+    samtools view -bS "${SAM_FILE}" > "${BAM_FILE}"
+    
+    echo "... Removing intermediate files" #remove all the intermediate files that are not further needed.
+    rm -f "${SAM_FILE}"
+    rm -f "${INDEX_PREFIX}"*
+    echo "Sample ${SAMPLE} finished."
+    echo ""
+done
+echo "======================================="
+echo "ALL ANALYSIS FINISHED !!!"
+echo "======================================="
+```
+
+As a result, one BAM file per sample will be generated.
+
+# 7. Contigs depth calculation
+
+In order to perform the binning (the process in which MAGS (*Metagenome Assembled Genome*) are obtained from metagenomes), we need to get the average and variance of each contig depth. Therefore, we have to calculate these parameters.
+
+The software [**MetaBAT2**](https://bitbucket.org/berkeleylab/metabat/src/master/ "click to check all the details")[^10] performs the binning, and the developers also included the script `jgi_summarize_bam_contig_depths` in the software to calculate the contigs depth. So, we are going to run a loop over our samples to obtain these values:
+
+[^10]: Kang, D.D., Li, F., Kirton, E., Thomas, A., Egan, R., An, H., Wang, Z., (2019) MetaBAT 2: an adaptive binning algorithm for robust and efficient genome reconstruction from metagenome assemblies. PeerJ. 26;7:e7359. https://doi.org/10.7717/peerj.7359
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONDA_BASE="/home/ana/miniconda3"
+CONDA_ENV="nanopore" #indicate the specific name of the environment where MetaBAT is located
+
+BAM_DIR="/home/ana/Metagenomas_prueba_illumina/06.bowtie_contigs_reads" #path to the directory containing the BAM files obtainer in step 6.
+DEPTH_DIR="/home/ana/Metagenomas_prueba_illumina/07.depth_metabat" #path to the output directory
+THREADS=64
+
+source "${CONDA_BASE}/etc/profile.d/conda.sh" #activate the environment
+conda activate "${CONDA_ENV}"
+
+mkdir -p "${DEPTH_DIR}"
+
+echo "======================================="
+echo "Starting MetaBAT2 depth calculation"
+echo "======================================="
+
+# Loop to calculate the depth based on BAM files
+for BAM_FILE in "${BAM_DIR}"/*.bam; do
+
+    BASENAME=$(basename "${BAM_FILE}" .bam)
+    
+    SORTED_BAM="${BAM_DIR}/sorted_${BASENAME}.bam"
+    DEPTH_FILE="${DEPTH_DIR}/depth_${BASENAME}.txt"
+    
+    echo "---------------------------------------"
+    echo "Processing sample: ${BASENAME}"
+    echo "---------------------------------------"
+    
+    # It is advisable that all the BAM files are properly sorted for the correct functioning of MetaBAT
+    echo "... Sorting BAM"
+    
+    # We sort them with samtools
+    samtools sort -@ "${THREADS}" -o "${SORTED_BAM}" "${BAM_FILE}" #look at the SAMtool's manul to gain more insights into the specific flags
+    
+    # Calculate the depth
+    echo "... Calculating contig depth (MetaBAT2)"
+    jgi_summarize_bam_contig_depths \
+        --outputDepth "${DEPTH_FILE}" \
+        "${SORTED_BAM}"
+        
+    echo "... Removing temporary sorted BAM"
+    rm -f "${SORTED_BAM}"
+    
+    echo "Sample ${BASENAME} finished."
+    echo ""
+done
+echo "======================================="
+echo "ALL DEPTH CALCULATIONS FINISHED !!!"
+echo "======================================="
+```
+
+This script will generate one text file per sample, with the name pattern: `depth_SAMPLENAME.txt`. In return, it will contain the name of the contigs, their length, mean, among other parameters.
+
+# 8. Binning contigs into MAGs
+
+As stated before, contigs may be assembled into MAGs, by means of **MetaBAT**. Two types of files are needed for MetaBAT: fasta files of filtered contigs, and the depth just calculated for them:
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONDA_BASE="/home/ana/miniconda3"
+CONDA_ENV="nanopore" #indicate the environment where MetaBAT is loaded
+
+CONTIGS_DIR="/home/ana/Metagenomas_prueba_illumina/05.filtered_contigs" #path to fasta files of the filtered contigs
+DEPTH_DIR="/home/ana/Metagenomas_prueba_illumina/07.depth_metabat" #path to the depth files
+OUTPUT_DIR="/home/ana/Metagenomas_prueba_illumina/08.metabat_results" #ouput directory
+
+THREADS=80
+MIN_CONTIG_LENGTH=1500 #metabat requires contigs longer than 1500 bp 
+MIN_BIN_SIZE=50000 #the minimum size of the bins (different from the size of the contigs!)
+#adapt these parameters according to the expected size of the bacterial genomes in your samples, or to the complexity of the samples
+
+source "${CONDA_BASE}/etc/profile.d/conda.sh"
+conda activate "${CONDA_ENV}" #activate conda environment
+
+mkdir -p "${OUTPUT_DIR}"
+
+echo "======================================="
+echo "Starting MetaBAT2 binning pipeline"
+echo "======================================="
+
+for CONTIG_FILE in "${CONTIGS_DIR}"/contigs_*_min1000.fna; do #Be careful with the ending patter of the name of the input files. Adapt it according to the name of your contigs files
+    FILE_NAME=$(basename "${CONTIG_FILE}" .fna)
+    
+    # Extract the name of the samples
+    SAMPLE=${FILE_NAME#contigs_}
+    SAMPLE=${SAMPLE%_min1000}#again, be careful with the name of the files
+    
+    DEPTH_FILE="${DEPTH_DIR}/depth_${SAMPLE}.txt" #the name pattern of the depth file. Adapt it according to the name of your files
+    SAMPLE_OUTPUT_PREFIX="${OUTPUT_DIR}/${SAMPLE}" #establish the prefix of the sample names
+    
+    #check wether the depth files are in the directory 
+    if [[ ! -f "${DEPTH_FILE}" ]]; then
+        echo "Depth file not found for ${SAMPLE}, skipping..."
+        continue
+    fi
+    
+    echo "---------------------------------------"
+    echo "Running MetaBAT2 for sample: ${SAMPLE}"
+    echo "---------------------------------------"
+    metabat2 \
+        -i "${CONTIG_FILE}" \
+        -o "${SAMPLE_OUTPUT_PREFIX}" \
+        -a "${DEPTH_FILE}" \ #depth file
+        -t "${THREADS}" \
+        -s "${MIN_BIN_SIZE}" \ #minimun bin size
+        -m "${MIN_CONTIG_LENGTH}" #minium contig length
+    echo "Sample ${SAMPLE} finished."
+    echo ""
+done
+```
+
+This process takes time, and eventually, several fasta files (`.fna` files) will be created. These files are the fasta of all the bins obtained after the binning, for all the samples. Do not pannic if many files are generated, because we may find several MAGs in each sample. The name of the files will be: `sample_name.XXXX.fa`, where *XXXX* corresponds to the number of each MAG or Bin.
+
+Remember than you can have a look at the obtained bins by means of the command `tail -n 40 path_to_metabat_resuts/sample_name.X.fa`.
+
+# 9. Check the quality of the bins
+
+Now, we will check the quality of the assembled bins by means of the software [**CheckM2**](https://github.com/chklovski/CheckM2 "click to see more details")[^11]. CheckM2 uses the external DIAMOND database for rapid annotation, so we need to download it in a specific directory. See the documentation for more details about the downloading process.
+
+[^11]: Chklovski, A., Parks, D.H., Woodcroft, B.J. *et al*., (2023) CheckM2: a rapid, scalable and accurate tool for assessing microbial genome quality using machine learning. Nat Methods 20, 1203–1212. https://doi.org/10.1038/s41592-023-01940-w
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+BINS_DIR="/home/ana/Metagenomas_prueba_illumina/08.metabat_results" #path to the metaBAT's results, containing the fasta files of all the obtained MAGs
+OUTPUT_DIR="/home/ana/Metagenomas_prueba_illumina/09.checkm2_results" #output directory
+DATABASE="/home/ana/Genomas_nanopore/CheckM2_database/uniref100.KO.1.dmnd" #path to the CheckM2 database. In this example, it was previously created in another project
+
+CONDA_ENV="checkm2" #indicate the name of conda environment where CheckM2 is placed
+
+THREADS=64
+BIN_EXTENSION="fa" #indicate the extension of the fasta files corresponding to bins
+
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate "${CONDA_ENV}" #activate conda environment automatically
+
+mkdir -p "${OUTPUT_DIR}"
+
+echo "======================================="
+echo "Starting CheckM2 genome quality assessment"
+echo "======================================="
+
+checkm2 predict \
+    --input "${BINS_DIR}" \
+    --output-directory "${OUTPUT_DIR}" \
+    --remove_intermediates \
+    --threads "${THREADS}" \
+    -x "${BIN_EXTENSION}" \
+--database_path "${DATABASE}" \
+--force #overwrite output directory (specially designed it your using the script for the first time)
+
+echo "======================================="
+echo "CheckM2 analysis finished successfully!"
+echo "======================================="
+```
+
+The script creates two files: `checkm2.log`, and `quality_report.tsv`. The latter shows these parameters for each bin: Name, Completeness, Contamination, Coding density, GC content, among many others.
+
+# 10. Selecting medium and high-quality Bins
+
+We will inspect two parameters specifically: the **completeness** of the genomes and the percentage of **contamination**. According to Bowers and co-workers (2017)[^12], we can categorize the assembled bins into two categories:
+
+[^12]: Bowers, R.M,, *et al*., (2017) Minimum information about a single amplified genome (MISAG) and a metagenome-assembled genome (MIMAG) of bacteria and archaea. Nat Biotechnol. 35:725-731. https://doi.org/10.1038/nbt.3893.
+
+\-**High quality bins (HQ)**: completeness \> 90% and contamination \< 5%,
+
+\-**Medium quality bins (MQ)**: completeness \> 50% and contamination \< 5%
+
+So, we will remove low-quality bins (or get HQ and MQ bins):
+
+``` r
+#!/usr/bin/env bash
+set -euo pipefail
+
+CHECKM2_DIR="/home/ana/Metagenomas_prueba_illumina/09.checkm2_results" #path to the results of CheckM2
+CHECKM2_REPORT="${CHECKM2_DIR}/quality_report.tsv" #path and name of the quality report given by CheckM2
+
+BINS_DIR="/home/ana/Metagenomas_prueba_illumina/08.metabat_results" #path to the bins obtained by MetaBAT
+
+OUTPUT_DIR="/home/ana/Metagenomas_prueba_illumina/10.selected_MAGs" #output directory
+OUTPUT_TABLE="${OUTPUT_DIR}/summary_selected_MAGs.txt" #the name of a summary file we are going to prepare
+
+MIN_COMPLETENESS=50 #indicate thee quality cut-off
+MAX_CONTAMINATION=5 #indicate the contamination cut-off
+
+mkdir -p "${OUTPUT_DIR}"
+
+# Create an empty file
+> "${OUTPUT_TABLE}"
+
+echo "======================================="
+echo "Selecting MAGs based on CheckM2 results"
+echo "======================================="
+
+#Filter the bins according to the established cut-offs, selecting them from the BINS_DIR 
+awk -F "\t" -v minc="${MIN_COMPLETENESS}" -v maxc="${MAX_CONTAMINATION}" '
+NR>1 {
+    bin=$1
+    comp=$2+0
+    cont=$3+0
+
+    if (comp > minc && cont < maxc) {
+        print bin "\t" comp "\t" cont
+    }
+}
+' "${CHECKM2_REPORT}" | while read -r BIN COMP CONT; do
+
+    BIN_FILE="${BINS_DIR}/${BIN}.fa"
+
+    if [[ -f "${BIN_FILE}" ]]; then
+        echo -e "${BIN}\t${COMP}\t${CONT}" >> "${OUTPUT_TABLE}" #Create the summary file
+        cp "${BIN_FILE}" "${OUTPUT_DIR}/"
+    else
+        echo "Warning: ${BIN_FILE} not found"
+    fi
+
+done
+
+echo "======================================="
+echo "MAG selection finished!"
+echo "Selected MAGs stored in:"
+echo "${OUTPUT_DIR}"
+echo "Summary table:"
+echo "${OUTPUT_TABLE}"
+echo "======================================="
+```
+
+After running these lines, we obtain, on the one hand a file named `summary_selected_MAGs.txt`. It includes the name, the completeness and contamination values of all selected bins (bins that have passed out the filtering). On the other hand, we can also found the fasta files (`samplename_contignumber.fa`) corresponding to all the MQ and HQ bins.
+
+# 11. Further analyses
+
+We can perform many different metagenomic analyses. If you want to analyse the genomes corresponding to MAGs in detail, I recommend that you follow the protocol described for detailed genome analysis [here](Genomes_Nanopore.qmd)

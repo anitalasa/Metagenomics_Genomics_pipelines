@@ -1,0 +1,16 @@
+---
+title: "Metagenomics pipeline"
+subtitle: "Sequencing platform: Oxford Nanopore"
+author: "Ana V. Lasa (ana.lasa@eez.csic.es)"
+format: 
+  html:
+    theme: united
+    lang: en
+    css: styles.css
+editor: visual
+crossref:
+  fig-prefix: "Figure"
+  tbl-prefix: "Table"
+---
+
+Still building
